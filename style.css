@@ -1,0 +1,126 @@
+[v-cloak] {
+    display: none;
+}
+
+body {
+    background-color: #f8f9fa;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+    padding: 0;
+}
+
+/* Colors */
+.text-orange {
+    color: #ff6600 !important;
+}
+
+.bg-orange {
+    background-color: #ff6600 !important;
+}
+
+.btn-orange {
+    background-color: #ff6600;
+    color: white;
+    border: none;
+}
+
+.btn-orange:hover {
+    background-color: #e65c00;
+    color: white;
+}
+
+/* Layout */
+#app {
+    display: flex;
+    height: 100vh;
+}
+
+.sidebar {
+    width: 280px;
+    background-color: #343a40; /* Dark gray for contrast */
+    color: white;
+    flex-shrink: 0;
+    overflow-y: auto;
+}
+
+.main-content {
+    flex-grow: 1;
+    overflow-y: auto;
+    background-color: #f8f9fa;
+}
+
+/* Nav Links */
+.nav-link {
+    color: #ced4da;
+    border-radius: 8px;
+    margin-bottom: 5px;
+    transition: all 0.2s;
+}
+
+.nav-link:hover {
+    color: white;
+    background-color: rgba(255,255,255,0.1);
+}
+
+.nav-link.active {
+    background-color: #ff6600 !important;
+    color: white !important;
+    font-weight: bold;
+}
+
+.btn-tahminleme {
+    background: linear-gradient(45deg, #ff6600, #ff8533);
+    border: none;
+}
+.btn-tahminleme:hover {
+    background: linear-gradient(45deg, #e65c00, #ff6600);
+}
+
+/* Utils */
+.cursor-pointer {
+    cursor: pointer;
+}
+
+.card {
+    border-radius: 10px;
+}
+
+.table th {
+    font-weight: 600;
+}
+
+/* --- Yeni eklenenler --- */
+.logo-box { background: #fff; border-radius: 8px; padding: 6px 10px; }
+.logo-box img { width: 100%; display: block; }
+.btn-outline-orange { border: 1px solid #ff6600; color: #ff6600; background: #fff; }
+.btn-outline-orange:hover { background: #ff6600; color: #fff; }
+.drag-handle { cursor: grab; color: #adb5bd; }
+.drag-src { opacity: .4; }
+.num-input .spin { display: flex; flex-direction: column; width: 26px; background: #f8f9fa; }
+.num-input .spin button { flex: 1; border: 0; background: transparent; font-size: 9px; line-height: 1; color: #6c757d; padding: 0; }
+.num-input .spin button:hover { color: #ff6600; }
+.num-input .is-invalid ~ .spin { border-color: #dc3545; }
+.vehicle-strip { display: flex; gap: 16px; overflow-x: auto; padding-bottom: 10px; }
+.vehicle-strip::-webkit-scrollbar { height: 10px; }
+.vehicle-strip::-webkit-scrollbar-thumb { background: #ff6600; border-radius: 6px; }
+.vcard { width: 280px; flex: 0 0 280px; }
+.kpi { background: #fff; border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); height: 100%; }
+.kpi-l { font-size: .75rem; text-transform: uppercase; color: #6c757d; letter-spacing: .03em; }
+.kpi-v { font-size: 1.35rem; font-weight: 700; }
+.kpi-s { font-size: .75rem; color: #6c757d; }
+.nav-tabs .nav-link { color: #495057; border: 0; border-bottom: 3px solid transparent; border-radius: 0; margin-bottom: 0; }
+.nav-tabs .nav-link.active { color: #ff6600 !important; background: transparent !important; border-bottom-color: #ff6600; font-weight: 600; }
+.progress-bar.bg-orange { background-color: #ff6600 !important; }
+tr.cursor-pointer:hover { background: #fff4ec; }
+.form-range { accent-color: #ff6600; }
+.form-range::-webkit-slider-thumb { background: #ff6600; }
+.form-range::-moz-range-thumb { background: #ff6600; }
+.form-range:focus::-webkit-slider-thumb { box-shadow: 0 0 0 .2rem rgba(255,102,0,.25); }
+
+/* --- v3 --- */
+.app-title { color: #ff6600; font-weight: 800; font-size: 1.45rem; line-height: 1.2; letter-spacing: .2px; }
+.nav-link.sub-link { margin-left: 18px; font-size: .9rem; padding-top: 6px; padding-bottom: 6px; border-left: 2px solid rgba(255,255,255,.15); border-radius: 0 8px 8px 0; }
+.pagination .page-link { color: #ff6600; }
+.pagination .page-item.active .page-link { background: #ff6600; border-color: #ff6600; color: #fff; }
+.pagination .page-link:focus { box-shadow: 0 0 0 .2rem rgba(255,102,0,.25); }
+.kpi-title { font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #868e96; margin: 6px 0 8px; }

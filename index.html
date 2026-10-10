@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eurocross Turkey İkame Tahminleme Projesi</title>
+    <link rel="icon" href="images/eurocross-logo.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app" v-cloak>
+        <!-- Sidebar -->
+        <div class="sidebar d-flex flex-column p-3">
+            <div class="brand mb-3 text-center">
+                <div class="logo-box mb-2"><img src="images/eurocross-logo.png" alt="Eurocross Turkey"></div>
+                <h1 class="app-title mb-0">Eurocross Turkey<br>İkame Tahminleme Projesi</h1>
+            </div>
+            <hr class="text-secondary">
+            <ul class="nav nav-pills flex-column mb-auto">
+                <li class="nav-item" v-for="t in tabs" :key="t.id">
+                    <a href="#" class="nav-link" :class="{active: activeTab === t.id, 'sub-link': false}" @click.prevent="activeTab = t.id">
+                        <i class="bi me-2" :class="t.icon"></i> {{ t.label }}
+                    </a>
+                </li>
+                <li class="mt-4">
+                    <a href="#" class="nav-link btn-tahminleme text-white" :class="{active: activeTab === 'tahminleme'}" @click.prevent="activeTab = 'tahminleme'">
+                        <i class="bi bi-speedometer2 me-2"></i> Tahminleme Simülatörü
+                    </a>
+                </li>
+            </ul>
+        </div>
+
+        <div class="main-content p-4">
+
+            <!-- ================= Araç / Personel Gider Başlıkları ================= -->
+            <div v-if="activeTab === 'giderBasliklari' || activeTab === 'personelGider'">
+                <h3 class="mb-4 text-orange">{{ isP ? 'Personel Gider Başlıkları' : 'Araç Gider Başlıkları' }}</h3>
+
+                <div class="card shadow-sm border-0 mb-4" v-if="isP">
+                    <div class="card-body">
+                        <h6 class="text-orange border-bottom pb-2">Personel Bilgisi</h6>
+                        <label class="form-label">Çalıştırılacak personel sayısı</label>
+                        <div style="max-width:220px"><num-input v-model="settings.personelSayisi" :step="1" :min="0"></num-input></div>
+                        <div class="small text-muted mt-2">Her başlığın tutarı <b>kişi başı yıllık</b> girilir; gider = tutar × personel sayısı. Enflasyonla yıllara göre artar. Personel gideri filo geneli sabit gider olarak hesaplanır ve simülatörde araçlara/dosyalara aldıkları dosya oranında dağıtılır.</div>
+                        <div class="table-responsive mt-3" v-if="settings.personelTanimlari.length">
+                            <table class="table table-sm text-end mb-0">
+                                <thead class="table-light"><tr><th class="text-start"></th><th v-for="y in years" :key="y">{{ y }}</th></tr></thead>
+                                <tbody>
+                                    <tr><td class="text-start">Kişi başı yıllık</td><td v-for="y in years" :key="y">{{ money(persSummary.perPerson[y]) }}</td></tr>
+                                    <tr class="fw-bold"><td class="text-start">Toplam personel gideri ({{ persSummary.count }} kişi)</td><td v-for="y in years" :key="y" class="text-orange">{{ money(persSummary.totals[y]) }}</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-body">
+                        <p class="text-muted">{{ isP ? 'Çalıştıracağınız vale/personel için tüm maliyet başlıklarını buradan yönetebilirsiniz. Bu başlıklar araç giriş formunda görünmez.' : 'Araçlar için girmek istediğiniz tüm maliyet başlıklarını buradan yönetebilirsiniz.' }}</p>
+                        <div style="max-width: 560px;">
+                            <label class="form-label">Yeni başlık ekle</label>
+                            <input type="text" class="form-control mb-3" v-model="newHeader" :placeholder="isP ? 'Yeni başlık ekle (Örn: Maaş)' : 'Yeni başlık ekle (Örn: Lastik Gideri)'" @keyup.enter="addHeader">
+                            <label class="form-label">Kategori</label>
+                            <input type="text" class="form-control mb-3" v-model="newCategory" list="catList" placeholder="Kategori (Örn: Ekipman)" @keyup.enter="addHeader">
+                            <datalist id="catList"><option v-for="c in categories" :key="c" :value="c"></option></datalist>
+                            <template v-if="isP">
+                                <label class="form-label">Kişi başı yıllık tutar (₺)</label>
+                                <div class="mb-3" style="max-width:220px"><num-input v-model="newAmount" :step="1"></num-input></div>
+                            </template>
+                            <button class="btn btn-orange" @click="addHeader"><i class="bi bi-plus-lg"></i> Ekle</button>
+                            <div class="text-danger small mt-2" v-if="headerError">{{ headerError }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card shadow-sm border-0">
+                    <table class="table align-middle mb-0">
+                        <thead class="table-light"><tr><th style="width:44px"></th><th>Başlık</th><th>Kategori</th><th v-if="isP" style="width:240px">Kişi Başı Yıllık Tutar (₺)</th><th style="width:60px"></th></tr></thead>
+                        <tbody>
+                            <tr v-for="(h, i) in hdrList" :key="h.ad" draggable="true"
+                                @dragstart="dragIndex = i" @dragover.prevent @drop="onDrop(i)" :class="{'drag-src': dragIndex === i}">
+                                <td class="drag-handle"><i class="bi bi-grip-vertical"></i></td>
+                                <td>{{ h.ad }}</td>
+                                <td><span class="badge bg-light text-dark border">{{ h.kategori }}</span></td>
+                                <td v-if="isP"><num-input v-model="h.tutar" :step="1"></num-input></td>
+                                <td class="text-end"><i class="bi bi-trash text-orange cursor-pointer" title="Sil" @click="removeHeader(i)"></i></td>
+                            </tr>
+                            <tr v-if="!hdrList.length"><td :colspan="isP ? 5 : 4" class="text-center text-muted py-4">Henüz başlık eklenmedi.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <small class="text-muted">Başlıkları tutup sürükleyerek sıralayabilirsiniz.{{ isP ? '' : ' Sıra, araç giriş formunda da aynen kullanılır.' }}</small>
+            </div>
+
+            <!-- ================= Araç Veri Girişi ================= -->
+            <div v-if="activeTab === 'aracGiris'">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h3 class="text-orange mb-0">Araç Marka Model Gider Girişi</h3>
+                    <button class="btn btn-orange" @click="openVehicleModal()"><i class="bi bi-plus-circle"></i> Yeni Araç Ekle</button>
+                </div>
+                <div class="row g-4">
+                    <div class="col-md-4 col-xl-3" v-for="v in sortedVehicles" :key="v.id">
+                        <div class="card shadow-sm border-0 h-100">
+                            <img :src="v.imageBase64 || placeholder" class="card-img-top p-2" style="height: 150px; object-fit: contain;">
+                            <div class="card-body">
+                                <h5 class="card-title fw-bold text-orange">{{ v.markaModel }}</h5>
+                                <span class="badge bg-secondary mb-2 me-1">{{ v.segment }} Segmenti</span>
+                                <span class="badge bg-info text-dark mb-2">{{ v.yakitTuru }}</span>
+                                <div class="small text-muted">Optimum {{ v.giderler[defaultHeaders[0]] || '-' }} yıl · {{ formatCurrency(v.giderler[defaultHeaders[1]]) }} km</div>
+                                <div class="small text-muted">Satış tutarı: {{ v.satisTutari === null || v.satisTutari === undefined ? '-' : money(v.satisTutari) }}</div>
+                                <div class="small text-danger" v-if="!isComplete(v)"><i class="bi bi-exclamation-triangle"></i> Eksik veri var, düzenleyip tamamlayın</div>
+                                <div class="mt-3 d-flex justify-content-between">
+                                    <button class="btn btn-sm btn-outline-secondary" @click="openVehicleModal(vehicles.indexOf(v))"><i class="bi bi-pencil"></i> Düzenle</button>
+                                    <button class="btn btn-sm btn-outline-danger" @click="deleteVehicle(v)"><i class="bi bi-trash"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-12" v-if="vehicles.length === 0"><div class="alert alert-warning">Henüz hiç araç eklenmedi.</div></div>
+                </div>
+            </div>
+
+            <!-- ================= Yakıt ve Enflasyon ================= -->
+            <div v-if="activeTab === 'yakitVeEnflasyon'">
+                <h3 class="mb-4 text-orange">Yakıt ve Enflasyon Verileri</h3>
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-header bg-white"><h5 class="mb-0">Yıllar Tanımı</h5></div>
+                    <div class="card-body">
+                        <p class="text-muted small">Tahminleme yapılacak yılları belirleyin. En düşük yıl baz yıldır: giderler o yıl girilen tutardır, sonraki her yıl bir önceki yılın üzerine o yılın enflasyonu eklenir.</p>
+                        <div class="d-flex gap-2 mb-3 flex-wrap">
+                            <span class="badge bg-secondary fs-6 p-2" v-for="y in years" :key="y">{{ y }} <i class="bi bi-x-circle ms-1 cursor-pointer" @click="removeYear(y)"></i></span>
+                        </div>
+                        <div class="input-group" style="max-width:420px">
+                            <input type="number" class="form-control" v-model.number="newYear" placeholder="Yıl (Örn: 2032)" @keyup.enter="addYear">
+                            <button class="btn btn-orange" @click="addYear">Ekle</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-header bg-white"><h5 class="mb-0">Enflasyon Oranları (%)</h5></div>
+                    <div class="card-body"><div class="row">
+                        <div class="col-6 col-md-2 mb-3" v-for="y in years" :key="y">
+                            <label class="form-label fw-bold">{{ y }}</label>
+                            <div class="input-group"><input type="number" class="form-control" v-model.number="settings.enflasyonOranlari[y]"><span class="input-group-text">%</span></div>
+                        </div>
+                    </div></div>
+                </div>
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-header bg-white"><h5 class="mb-0">Yakıt Fiyatları (₺ / Litre)</h5></div>
+                    <div class="card-body">
+                        <template v-for="f in fuels" :key="f">
+                            <h6 class="text-orange">{{ f }} <small class="text-muted" v-if="f === 'Elektrik'">(₺ / kWh)</small></h6>
+                            <div class="row mb-3"><div class="col-6 col-md-2" v-for="y in years" :key="f + y">
+                                <label class="form-label">{{ y }}</label>
+                                <input type="number" step="any" class="form-control" v-model.number="settings.yakitFiyatlari[f][y]">
+                            </div></div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================= Tarihçe ================= -->
+            <div v-if="activeTab === 'tarihce'">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h3 class="text-orange mb-0">Dosya İade/Teslim Tarih Verisi</h3>
+                    <div>
+                        <button class="btn btn-outline-secondary me-2" @click="showPaste = !showPaste"><i class="bi bi-clipboard"></i> Yapıştır</button>
+                        <button class="btn btn-outline-secondary me-2" @click="clearHistoricalData"><i class="bi bi-trash"></i> Temizle</button>
+                        <label class="btn btn-orange mb-0"><i class="bi bi-file-excel"></i> Excel Yükle
+                            <input type="file" hidden @change="handleFileUpload" accept=".xlsx,.xls,.csv"></label>
+                    </div>
+                </div>
+                <div class="alert alert-info border-0 shadow-sm">
+                    <strong>Bilgi:</strong> Yükleyeceğiniz Excel/CSV dosyasında <code>Dosya Numarası</code>, <code>Segment</code>, <code>Araç Teslimat Tarihi</code> ve <code>Araç İade Tarihi</code> sütun başlıkları bulunmalıdır (tarihler saat içermelidir). <b>Yeni bir dosya yüklediğinizde mevcut tarihçe silinir</b> ve yerine yeni veriler yazılır (onay istenir).
+                </div>
+                <div class="card shadow-sm border-0 mb-3" v-if="showPaste">
+                    <div class="card-body">
+                        <label class="form-label">Excel'den kopyalayıp yapıştırın (4 sütun: Dosya No, Segment, Teslimat, İade; başlık satırı olabilir)</label>
+                        <textarea class="form-control mb-2" rows="5" v-model="pasteText"></textarea>
+                        <button class="btn btn-orange" @click="addPasted" :disabled="!pasteText.trim()">Yapıştırılan Veriyi Yükle (mevcutların yerine)</button>
+                    </div>
+                </div>
+                <div class="alert alert-success py-2" v-if="importMsg">{{ importMsg }}</div>
+                <div class="card shadow-sm border-0">
+                    <div class="card-body p-0">
+                        <div class="table-responsive" style="max-height: 520px; overflow-y: auto;">
+                            <table class="table table-striped table-hover mb-0">
+                                <thead class="table-light sticky-top"><tr><th>#</th><th>Dosya Numarası</th><th>Segment</th><th>Teslimat Tarihi</th><th>İade Tarihi</th></tr></thead>
+                                <tbody>
+                                    <tr v-for="(row, idx) in histRows" :key="(histPage - 1) * histSize + idx">
+                                        <td>{{ (histPage - 1) * histSize + idx + 1 }}</td><td>{{ row.dosyaNo }}</td>
+                                        <td><span class="badge bg-secondary">{{ row.segment }}</span></td><td>{{ row.teslimat }}</td><td>{{ row.iade }}</td>
+                                    </tr>
+                                    <tr v-if="historicalData.length === 0"><td colspan="5" class="text-center py-4 text-muted">Veri bulunamadı. Lütfen Excel dosyası yükleyin.</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="card-footer bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div class="d-flex align-items-center gap-2 small text-muted">Sayfa başına
+                            <select class="form-select form-select-sm w-auto" v-model.number="histSize"><option>50</option><option>100</option><option>250</option><option>500</option></select>
+                            · Toplam {{ historicalData.length }} kayıt</div>
+                        <nav v-if="histPages > 1"><ul class="pagination pagination-sm mb-0">
+                            <li class="page-item" :class="{disabled: histPage === 1}"><a class="page-link" href="#" @click.prevent="histPage--">‹</a></li>
+                            <li class="page-item" v-for="(b, i) in pageButtons" :key="i" :class="{active: b === histPage, disabled: b === '…'}">
+                                <a class="page-link" href="#" @click.prevent="b !== '…' && (histPage = b)">{{ b }}</a></li>
+                            <li class="page-item" :class="{disabled: histPage === histPages}"><a class="page-link" href="#" @click.prevent="histPage++">›</a></li>
+                        </ul></nav>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================= İade Dönüş Saati ================= -->
+            <div v-if="activeTab === 'iadeSaati'">
+                <h3 class="mb-4 text-orange">İade Dönüş Saati Belirleme</h3>
+                <div class="card shadow-sm border-0" style="max-width: 680px;">
+                    <div class="card-body">
+                        <label class="form-label fw-bold">İade dönüş saati sınırı</label>
+                        <select class="form-select w-auto mb-3" v-model.number="timeRule">
+                            <option v-for="h in 24" :key="h" :value="h - 1">{{ (h - 1).toString().padStart(2, '0') }}:00:00</option>
+                        </select>
+                        <div class="alert alert-light border mb-0">
+                            <i class="bi bi-info-circle text-orange"></i>
+                            Dosyanın iade saati <b>{{ String(timeRule).padStart(2, '0') }}:00:00 veya daha geç</b> ise araç o gün yeni bir dosya alamaz; ertesi gün teslimatı başlayan dosyaya verilebilir.
+                            İade saati <b>{{ String(timeRule).padStart(2, '0') }}:00'dan önceyse</b> araç aynı gün, dönüş saatinden sonra başlayan bir dosyayı karşılayabilir.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================= Günlük Tutar ================= -->
+            <div v-if="activeTab === 'gunlukTutar'">
+                <h3 class="mb-4 text-orange">Günlük Tutar</h3>
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-body">
+                        <p class="text-muted">Segment ve yıla göre araç başı günlük kira tutarı (₺). Simülatörde gelir = aracın o yıl çalıştığı gün sayısı × günlük tutar olarak hesaplanır.</p>
+                        <div class="table-responsive">
+                            <table class="table align-middle">
+                                <thead class="table-light"><tr><th style="width:140px">Segment</th><th v-for="y in years" :key="y" style="min-width:150px">{{ y }}</th></tr></thead>
+                                <tbody>
+                                    <tr v-for="s in segments" :key="s">
+                                        <th>{{ s }}</th>
+                                        <td v-for="y in years" :key="s + y"><num-input v-model="settings.gunlukTutar[s][y]" :step="1"></num-input></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="input-group mt-2" style="max-width:420px">
+                            <input type="number" class="form-control" v-model.number="newYear" placeholder="Yıl ekle (Örn: 2031)" @keyup.enter="addYear">
+                            <button class="btn btn-orange" @click="addYear">Yıl Ekle</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================= Tahminleme Simülatörü ================= -->
+            <div v-if="activeTab === 'tahminleme'">
+                <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                    <h3 class="text-orange mb-0">Tahminleme Simülatörü</h3>
+                    <div class="small text-muted"><i class="bi bi-clock-history text-orange"></i> İade saati sınırı: <b>{{ String(timeRule).padStart(2,'0') }}:00</b>
+                        · Tarihçe: <b>{{ historicalData.length }}</b> dosya<span v-if="spanInfo"> ({{ spanInfo }} gün)</span></div>
+                </div>
+                <div class="alert alert-info py-2 small" v-if="spanInfo && spanInfo < 355">Tarihçe {{ spanInfo }} günü kapsıyor; çalışılan/boşta gün ve gelir bu süreye göre hesaplanır (365 güne oranlanmaz). Tam yıllık veri yüklediğinizde 365 gün esas alınır.
+                </div>
+
+                <div class="alert alert-warning" v-if="!vehicles.length">Önce "Araç Veri Girişi" sekmesinden araç ekleyin.</div>
+                <div class="alert alert-warning" v-else-if="!historicalData.length">Dosya tarihçesi yok. "Tarihçe (Dosyalar)" sekmesinden Excel yükleyin.</div>
+                <div class="alert alert-danger py-2" v-if="incompleteVehicles.length"><i class="bi bi-exclamation-triangle"></i> Eksik gider verisi olan araçlar var (eksikler 0 sayılır): {{ incompleteVehicles.map(v => v.markaModel || '(adsız)').join(', ') }}</div>
+                <div class="alert alert-warning py-2" v-if="report.unsold.length && totalPlates"><i class="bi bi-exclamation-triangle"></i> Optimum satış yılı tanımlı yıl sayısından fazla olan araçlarda satış geliri hesaba katılamadı ({{ report.unsold.join(', ') }}). Yakıt &amp; Enflasyon sekmesinden yıl ekleyin.</div>
+                <div class="alert alert-warning py-2" v-if="settings.personelTanimlari.length && !settings.personelSayisi"><i class="bi bi-exclamation-triangle"></i> Personel başlıkları var ama personel sayısı girilmemiş; personel gideri 0 hesaplanır.</div>
+                <div class="alert alert-warning py-2" v-if="report.missingRates.length && totalPlates"><i class="bi bi-exclamation-triangle"></i> Günlük tutar girilmemiş (gelir 0 hesaplanır): {{ report.missingRates.join(', ') }}</div>
+
+                <!-- Araç kartları: sağa kaydırmalı -->
+                <div class="vehicle-strip mb-4" v-if="vehicles.length">
+                    <div class="card vcard shadow-sm border-0" v-for="v in sortedVehicles" :key="v.id">
+                        <img :src="v.imageBase64 || placeholder" class="p-2" style="height:120px;object-fit:contain;">
+                        <div class="card-body pt-0">
+                            <div class="fw-bold text-orange">{{ v.markaModel }}</div>
+                            <span class="badge bg-secondary me-1">{{ v.segment }}</span><span class="badge bg-info text-dark">{{ v.yakitTuru }}</span>
+                            <div class="small text-muted mt-1">Araç başı gider ({{ costOf(v.id).opt }} yıl): <b>{{ money(vehicleTotal(v)) }}</b></div>
+                            <div class="small text-muted">Satış tutarı: <b>{{ money(v.satisTutari) }}</b></div>
+                            <button class="btn btn-sm btn-outline-orange my-2" @click="showCostDetails(v)"><i class="bi bi-search"></i> İncele</button>
+                            <input type="range" class="form-range" min="0" max="300" :value="v.count" @input="setCount(v, $event.target.value)">
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" min="0" class="form-control form-control-sm text-center" style="width:80px" :value="v.count" @input="setCount(v, $event.target.value)"> <span class="small">adet</span>
+                            </div>
+                            <div class="mt-2 small cost-line"><b class="text-orange">Gider Maliyeti:</b> {{ v.count }} × {{ money(vehicleTotal(v)) }} = <b>{{ money(v.count * vehicleTotal(v)) }}</b></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="totalPlates">
+                    <!-- Filtreler -->
+                    <div class="card shadow-sm border-0 mb-3"><div class="card-body py-2 d-flex gap-3 align-items-end flex-wrap">
+                        <div><label class="small text-muted">Yıl</label>
+                            <select class="form-select form-select-sm" v-model="filters.year"><option value="all">Tümü</option><option v-for="y in years" :key="y" :value="y">{{ y }}</option></select></div>
+                        <div><label class="small text-muted">Ay</label>
+                            <select class="form-select form-select-sm" v-model="filters.month"><option value="all">Tümü</option><option v-for="(m, i) in months" :key="i" :value="i">{{ m }}</option></select></div>
+                        <div><label class="small text-muted">Segment</label>
+                            <select class="form-select form-select-sm" v-model="filters.seg"><option value="all">Tümü</option><option v-for="s in segments" :key="s" :value="s">{{ s }} Segmenti</option></select></div>
+                        <div><label class="small text-muted">Marka</label>
+                            <select class="form-select form-select-sm" v-model="filters.vid"><option value="all">Tümü</option><option v-for="v in brandOptions" :key="v.id" :value="v.id">{{ v.markaModel }}</option></select></div>
+                        <div class="small text-muted ms-auto">Toplam {{ totalPlates }} araç plakası oluşturuldu. "Yıl: Tümü" iken araçların tüm kullanım yılları toplanır. Ay seçiliyken o ay teslim edilen dosyalar esas alınır; yıllık giderler ayın gün sayısına oranlanır ve araç satış geliri dahil edilmez. Araç ömrü (optimum satış yılı) dolunca araç satılır, yerine yenisi alınmaz.</div>
+                    </div></div>
+
+                    <!-- Özet kartlar -->
+                    <div class="kpi-title">Finansal Sonuç</div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Toplam Gelir</div><div class="kpi-v text-success">{{ money(view.gelir) }}</div><div class="kpi-s">Kiralama {{ money(view.total.revenue) }} + Araç satışı {{ money(view.total.sale) }}</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Araç Gideri</div><div class="kpi-v text-danger">{{ money(view.total.cost) }}</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Personel Gideri</div><div class="kpi-v text-danger">{{ money(view.total.pers) }}</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Net Kâr / Zarar</div><div class="kpi-v" :class="netClass(view.total.net)">{{ money(view.total.net) }}</div><div class="kpi-s">Gelir − Araç Gideri − Personel Gideri</div></div></div>
+                    </div>
+                    <div class="kpi-title">Operasyon</div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Filo Doluluk Oranı</div><div class="kpi-v text-orange">{{ pct(view.util) }}</div><div class="kpi-s">{{ formatCurrency(view.total.work) }} çalışan / {{ formatCurrency(view.total.idle) }} boşta gün</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Karşılanan Dosya</div><div class="kpi-v">{{ formatCurrency(view.files.handled) }} <small class="text-muted fs-6">/ {{ formatCurrency(view.files.total) }}</small></div><div class="kpi-s">Kaçan: <b class="text-danger">{{ formatCurrency(view.files.total - view.files.handled) }}</b> dosya</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Karşılanan Dosya Oranı</div><div class="kpi-v" :class="ratioClass(view.files.ratio)">{{ pct(view.files.ratio) }}</div><div class="kpi-s"><span class="text-danger">●</span> %50 altı <span class="text-orange">●</span> %50-75 <span class="text-success">●</span> %75 üstü</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Araç Sayısı</div><div class="kpi-v">{{ formatCurrency(view.plateTotal) }}</div><div class="kpi-s">Hiç dosya almayan: <b :class="view.idlePlates ? 'text-danger' : ''">{{ view.idlePlates }}</b> araç</div></div></div>
+                    </div>
+                    <div class="kpi-title">Dosya Başı (Birim Ekonomi)</div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Dosya Başı Araç Gideri</div><div class="kpi-v text-danger">{{ money(view.perFileVeh) }}</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Dosya Başı Personel Gideri</div><div class="kpi-v text-danger">{{ money(view.perFilePers) }}</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Dosya Başı Gelir</div><div class="kpi-v text-success">{{ money(view.perFileRev) }}</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Dosya Başı Net</div><div class="kpi-v" :class="netClass(view.perFileNet)">{{ money(view.perFileNet) }}</div></div></div>
+                    </div>
+                    <div class="kpi-title">Ek İstatistikler</div>
+                    <div class="row g-3 mb-4">
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Araç Başı Net (toplam)</div><div class="kpi-v" :class="netClass(view.netPerPlate)">{{ money(view.netPerPlate) }}</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Çalışılan Gün Başı Net</div><div class="kpi-v" :class="netClass(view.netPerWorkDay)">{{ money(view.netPerWorkDay) }}</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Araç Başı Ort. Çalışma</div><div class="kpi-v">{{ formatCurrency(view.avgWork) }} <small class="text-muted fs-6">gün / yıl</small></div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Ortalama Kiralama Süresi</div><div class="kpi-v">{{ (view.avgRental || 0).toLocaleString('tr-TR', {maximumFractionDigits: 1}) }} <small class="text-muted fs-6">gün</small></div></div></div>
+                    </div>
+
+                    <!-- Detay sekmeleri -->
+                    <ul class="nav nav-tabs mb-3">
+                        <li class="nav-item" v-for="t in [['yillik','Yıllık Özet'],['segment','Segment'],['model','Araç Modeli'],['gider','Gider Dağılımı'],['plaka','Plaka Detayı']]" :key="t[0]">
+                            <a href="#" class="nav-link" :class="{active: detailTab === t[0]}" @click.prevent="detailTab = t[0]">{{ t[1] }}</a></li>
+                    </ul>
+
+                    <div class="card shadow-sm border-0"><div class="table-responsive">
+                        <!-- Yıllık -->
+                        <table class="table table-hover align-middle mb-0 text-end" v-if="detailTab === 'yillik'">
+                            <thead class="table-light"><tr><th class="text-start">Yıl</th><th>Aktif Araç</th><th>Çalışılan Gün</th><th>Boşta Gün</th><th>Doluluk</th><th>Kiralama Geliri</th><th>Araç Satışı</th><th>Araç Gideri</th><th>Personel Gideri</th><th>Net</th><th>Kümülatif Net</th></tr></thead>
+                            <tbody>
+                                <tr v-for="r in view.yearRows" :key="r.year"><td class="text-start fw-bold">{{ r.year }}</td><td>{{ r.plates }}</td><td>{{ formatCurrency(r.work) }}</td><td>{{ formatCurrency(r.idle) }}</td><td>{{ pct(r.util) }}</td>
+                                    <td>{{ money(r.revenue) }}</td><td>{{ money(r.sale) }}</td><td>{{ money(r.cost) }}</td><td>{{ money(r.pers) }}</td><td :class="netClass(r.net)">{{ money(r.net) }}</td><td class="fw-bold" :class="netClass(r.cum)">{{ money(r.cum) }}</td></tr>
+                            </tbody>
+                        </table>
+                        <!-- Segment -->
+                        <table class="table table-hover align-middle mb-0 text-end" v-if="detailTab === 'segment'">
+                            <thead class="table-light"><tr><th class="text-start">Segment</th><th>Araç</th><th>Dosya (tarihçe)</th><th>Karşılanan</th><th>Kaçan</th><th>Karşılama Oranı</th><th>Doluluk</th><th>Gelir</th><th>Araç Gideri</th><th>Personel Gideri</th><th>Net</th></tr></thead>
+                            <tbody>
+                                <tr v-for="r in view.segmentRows" :key="r.seg"><td class="text-start fw-bold">{{ r.seg }}</td><td>{{ r.cnt }}</td><td>{{ formatCurrency(r.total) }}</td><td>{{ formatCurrency(r.handled) }}</td>
+                                    <td :class="{'text-danger': r.missed}">{{ formatCurrency(r.missed) }}</td><td class="fw-bold" :class="ratioClass(r.ratio)">{{ pct(r.ratio) }}</td><td>{{ r.cnt ? pct(r.util) : '-' }}</td>
+                                    <td>{{ money(r.revenue + r.sale) }}</td><td>{{ money(r.cost) }}</td><td>{{ money(r.pers) }}</td><td :class="netClass(r.net)">{{ money(r.net) }}</td></tr>
+                            </tbody>
+                        </table>
+                        <!-- Model -->
+                        <table class="table table-hover align-middle mb-0 text-end" v-if="detailTab === 'model'">
+                            <thead class="table-light"><tr><th class="text-start">Araç</th><th>Segment</th><th>Adet</th><th>Çalışılan Gün</th><th>Boşta Gün</th><th>Doluluk</th><th>Gelir</th><th>Araç Gideri</th><th>Personel Gideri</th><th>Net</th></tr></thead>
+                            <tbody>
+                                <tr v-for="r in view.modelRows" :key="r.v.id"><td class="text-start"><img :src="r.v.imageBase64 || placeholder" class="rounded me-2" style="width:40px;height:30px;object-fit:cover"><b>{{ r.v.markaModel }}</b></td>
+                                    <td>{{ r.v.segment }}</td><td>{{ r.v.count }}</td><td>{{ formatCurrency(r.work) }}</td><td>{{ formatCurrency(r.idle) }}</td><td>{{ pct(r.util) }}</td>
+                                    <td>{{ money(r.revenue + r.sale) }}</td><td>{{ money(r.cost) }}</td><td>{{ money(r.pers) }}</td><td :class="netClass(r.net)">{{ money(r.net) }}</td></tr>
+                            </tbody>
+                        </table>
+                        <!-- Gider -->
+                        <div v-if="detailTab === 'gider'" class="row g-0">
+                            <div class="col-lg-7"><table class="table table-hover align-middle mb-0 text-end">
+                                <thead class="table-light"><tr><th class="text-start">Gider Kalemi</th><th class="text-start">Grup</th><th class="text-start">Kategori</th><th>Tutar</th><th>Pay</th></tr></thead>
+                                <tbody><tr v-for="r in view.itemRows" :key="r.grup + r.kalem"><td class="text-start">{{ r.kalem }}</td><td class="text-start">{{ r.grup }}</td><td class="text-start">{{ r.kategori }}</td><td>{{ money(r.tutar) }}</td><td>{{ pct(view.itemTotal ? r.tutar / view.itemTotal * 100 : 0) }}</td></tr></tbody>
+                            </table></div>
+                            <div class="col-lg-5 border-start"><table class="table table-hover align-middle mb-0 text-end">
+                                <thead class="table-light"><tr><th class="text-start">Kategori</th><th class="text-start">Grup</th><th>Tutar</th><th>Pay</th></tr></thead>
+                                <tbody><tr v-for="r in view.catRows" :key="r.grup + r.kategori"><td class="text-start fw-bold">{{ r.kategori }}</td><td class="text-start">{{ r.grup }}</td><td>{{ money(r.tutar) }}</td><td>{{ pct(view.itemTotal ? r.tutar / view.itemTotal * 100 : 0) }}</td></tr></tbody>
+                            </table></div>
+                        </div>
+                        <!-- Plaka -->
+                        <div v-if="detailTab === 'plaka'">
+                            <div class="p-2"><input type="text" class="form-control form-control-sm" style="max-width:320px" v-model="plateSearch" placeholder="Plaka, model veya segment ara..."></div>
+                            <table class="table table-hover align-middle mb-0 text-end">
+                                <thead class="table-light"><tr><th class="text-start">Plaka</th><th class="text-start">Araç</th><th>Segment</th><th>Dosya</th><th>Çalışılan</th><th>Boşta</th><th style="width:110px">Doluluk</th><th>Gelir</th><th>Araç Gideri</th><th>Personel</th><th>Net</th></tr></thead>
+                                <tbody>
+                                    <tr v-for="r in view.plateRows.slice(0, plateLimit)" :key="r.p.id" class="cursor-pointer" @click="showPlate(r.p)">
+                                        <td class="text-start fw-bold">{{ r.p.plate }}</td><td class="text-start">{{ r.p.model }}</td><td>{{ r.p.seg }}</td><td>{{ Math.round(r.files1) }}</td>
+                                        <td>{{ formatCurrency(r.work) }}</td><td>{{ formatCurrency(r.idle) }}</td>
+                                        <td><div class="progress" style="height:8px"><div class="progress-bar bg-orange" :style="{width: (r.work/(r.work+r.idle)*100) + '%'}"></div></div></td>
+                                        <td>{{ money(r.revenue + r.sale) }}</td><td>{{ money(r.cost) }}</td><td>{{ money(r.pers) }}</td><td :class="netClass(r.net)">{{ money(r.net) }}</td></tr>
+                                    <tr v-if="!view.plateRows.length"><td colspan="11" class="text-center text-muted py-3">Sonuç yok</td></tr>
+                                </tbody>
+                            </table>
+                            <div class="p-2 text-center" v-if="view.plateCount > plateLimit"><button class="btn btn-sm btn-outline-orange" @click="plateLimit += 200">Daha fazla göster ({{ view.plateCount - plateLimit }} araç daha)</button></div>
+                            <div class="p-2 small text-muted">Satıra tıklayarak plakanın yıllık ve gider kalemi detayını görebilirsiniz. "Dosya" aracın tarihçe döneminde aldığı dosya sayısıdır.</div>
+                        </div>
+                    </div></div>
+                </div>
+                <div class="alert alert-light border" v-else-if="vehicles.length">Araç kartlarından adet belirlediğinizde plakalar oluşur ve analiz burada görünür.</div>
+            </div>
+
+        </div> <!-- /Main -->
+
+        <!-- ============ Onay Penceresi (Evet / Hayır) ============ -->
+        <div class="modal fade" id="confirmModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+            <div class="modal-dialog modal-dialog-centered" style="max-width:440px"><div class="modal-content border-0 shadow">
+                <div class="modal-body text-center p-4">
+                    <i class="bi fs-1 text-orange" :class="confirmInfo ? 'bi-check-circle' : 'bi-question-circle'"></i>
+                    <p class="mt-2 mb-0 fs-6">{{ confirmText }}</p>
+                </div>
+                <div class="modal-footer justify-content-center border-0 pb-4 pt-0">
+                    <button class="btn btn-orange px-4" @click="answer(true)">{{ confirmInfo ? 'Tamam' : 'Evet' }}</button>
+                    <button class="btn btn-secondary px-4" v-if="!confirmInfo" @click="answer(false)">Hayır</button>
+                </div>
+            </div></div>
+        </div>
+
+        <!-- ============ Araç Modal ============ -->
+        <div class="modal fade" id="vehicleModal" tabindex="-1" data-bs-backdrop="static">
+            <div class="modal-dialog modal-xl modal-dialog-scrollable"><div class="modal-content" v-if="tempVehicle">
+                <div class="modal-header bg-orange text-white">
+                    <h5 class="modal-title">{{ editingVehicleIndex > -1 ? 'Araç Düzenle' : 'Yeni Araç Ekle' }}</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body bg-light"><div class="row g-4">
+                    <div class="col-md-4"><div class="card shadow-sm border-0 h-100"><div class="card-body">
+                        <h6 class="card-title border-bottom pb-2 text-orange">Temel Bilgiler</h6>
+                        <div class="mb-3"><label class="form-label">Marka Model <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" :class="{'is-invalid': submitted && !tempVehicle.markaModel.trim()}" v-model="tempVehicle.markaModel"></div>
+                        <div class="mb-3"><label class="form-label">Segment</label>
+                            <select class="form-select" v-model="tempVehicle.segment"><option v-for="s in segments" :key="s" :value="s">{{ s }} Segmenti</option></select></div>
+                        <div class="mb-3"><label class="form-label">Yakıt Türü</label>
+                            <select class="form-select" v-model="tempVehicle.yakitTuru"><option v-for="f in fuels" :key="f" :value="f">{{ f }}</option></select>
+                            <div class="form-text" v-if="tempVehicle.yakitTuru === 'Elektrik'">Elektrikli araçta 100 KM tüketimini kWh olarak girin.</div></div>
+                        <div class="mb-3"><label class="form-label">Araç Satış Tutarı (₺) <span class="text-muted small">(opsiyonel)</span></label>
+                            <num-input v-model="tempVehicle.satisTutari" :step="1" :min="0" :invalid="saleInvalid()"></num-input>
+                            <div class="form-text">Optimum satış yılı sonunda aracı satacağınız fiyat; gelir kalemi olarak hesaba katılır.</div></div>
+                        <div class="mb-3"><label class="form-label">Araç Fotoğrafı</label>
+                            <input type="file" class="form-control" accept="image/*" @change="handleImageUpload">
+                            <div class="mt-2 text-center" v-if="tempVehicle.imageBase64"><img :src="tempVehicle.imageBase64" class="img-thumbnail" style="max-height:150px;"></div></div>
+                    </div></div></div>
+                    <div class="col-md-8"><div class="card shadow-sm border-0 h-100"><div class="card-body">
+                        <h6 class="card-title border-bottom pb-2 text-orange">Gider ve Performans Verileri <small class="text-muted fw-normal">(<span class="text-danger">*</span> zorunlu alanlar)</small></h6>
+                        <div class="row g-3">
+                            <div class="col-md-6" v-for="h in allHeaders" :key="h">
+                                <label class="form-label small text-muted mb-1">{{ h }} <span class="text-danger" v-if="defaultHeaders.includes(h)">*</span></label>
+                                <num-input v-model="tempVehicle.giderler[h]" :step="fieldCfg(h).step" :decimals="fieldCfg(h).decimals" :min="fieldCfg(h).min" :invalid="fieldInvalid(h)"></num-input>
+                            </div>
+                        </div>
+                        <div class="form-text mt-2">Yıllık yakıt gideri = (Optimum Satış KM ÷ Optimum Satış Yılı) ÷ 100 × 100 KM tüketim × o yılın yakıt fiyatı.</div>
+                    </div></div></div>
+                </div></div>
+                <div class="modal-footer">
+                    <span class="text-danger small me-auto" v-if="submitted && formInvalid()">Lütfen kırmızı işaretli zorunlu alanları doldurun.</span>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
+                    <button type="button" class="btn btn-orange" @click="saveVehicle">Kaydet</button>
+                </div>
+            </div></div>
+        </div>
+
+        <!-- ============ Araç Gider Detay Modal ============ -->
+        <div class="modal fade" id="costModal" tabindex="-1">
+            <div class="modal-dialog modal-lg"><div class="modal-content">
+                <div class="modal-header bg-light"><h5 class="modal-title text-orange">Yıllık Gider Tablosu - {{ activeCostVehicle?.markaModel }}</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body" v-if="activeCostVehicle && costOf(activeCostVehicle.id)">
+                    <div class="table-responsive"><table class="table table-bordered table-sm text-end">
+                        <thead class="table-light"><tr><th class="text-start">Gider Kalemi</th><th v-for="y in years" :key="y">{{ y }}</th><th class="bg-warning-subtle">Toplam</th></tr></thead>
+                        <tbody><tr v-for="r in costOf(activeCostVehicle.id).rows" :key="r.kalem">
+                            <td class="text-start">{{ r.kalem }} <small class="text-muted">· {{ r.kategori }}</small></td>
+                            <td v-for="y in years" :key="y">{{ r.vals[y] === undefined ? '—' : money(r.vals[y]) }}</td>
+                            <td class="bg-warning-subtle fw-bold">{{ money(Object.values(r.vals).reduce((a, b) => a + b, 0)) }}</td></tr></tbody>
+                        <tfoot><tr class="table-secondary fw-bold"><td class="text-start">GENEL TOPLAM (1 Araç)</td>
+                            <td v-for="y in years" :key="y">{{ costOf(activeCostVehicle.id).totals[y] === undefined ? '—' : money(costOf(activeCostVehicle.id).totals[y]) }}</td>
+                            <td class="text-orange fs-6">{{ money(costOf(activeCostVehicle.id).total) }}</td></tr></tfoot>
+                    </table></div>
+                    <small class="text-muted">Optimum satış yılı {{ costOf(activeCostVehicle.id).opt }}: araç ilk {{ costOf(activeCostVehicle.id).life.length }} yıl kullanılır, sonrası “—” gösterilir.</small>
+                </div>
+            </div></div>
+        </div>
+
+        <!-- ============ Plaka Detay Modal ============ -->
+        <div class="modal fade" id="plateModal" tabindex="-1">
+            <div class="modal-dialog modal-xl"><div class="modal-content">
+                <div class="modal-header bg-light"><h5 class="modal-title text-orange" v-if="activePlate">{{ activePlate.plate }} · {{ activePlate.model }} ({{ activePlate.seg }})</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body" v-if="activePlate">
+                    <div class="table-responsive mb-3"><table class="table table-sm text-end">
+                        <thead class="table-light"><tr><th class="text-start">Yıl</th><th>Çalışılan Gün</th><th>Boşta Gün</th><th>Kiralama Geliri</th><th>Araç Satışı</th><th>Araç Gideri</th><th>Personel Gideri</th><th>Net</th></tr></thead>
+                        <tbody><tr v-for="y in activePlate.life" :key="y"><td class="text-start fw-bold">{{ y }}</td><td>{{ activePlate.byYear[y].work }}</td><td>{{ activePlate.byYear[y].idle }}</td>
+                            <td>{{ money(activePlate.byYear[y].revenue) }}</td><td>{{ money(activePlate.byYear[y].sale) }}</td><td>{{ money(activePlate.byYear[y].cost) }}</td><td>{{ money(activePlate.byYear[y].pers) }}</td><td :class="netClass(activePlate.byYear[y].net)">{{ money(activePlate.byYear[y].net) }}</td></tr></tbody>
+                    </table></div>
+                    <h6 class="text-secondary">Gider kalemi detayı</h6>
+                    <div class="table-responsive"><table class="table table-bordered table-sm text-end">
+                        <thead class="table-light"><tr><th class="text-start">Gider Kalemi</th><th v-for="y in activePlate.life" :key="y">{{ y }}</th></tr></thead>
+                        <tbody><tr v-for="r in costOf(activePlate.vid).rows" :key="r.kalem"><td class="text-start">{{ r.kalem }}</td><td v-for="y in activePlate.life" :key="y">{{ money(r.vals[y]) }}</td></tr>
+                            <tr v-for="r in report.pers.rows" :key="'p' + r.kalem" class="table-light"><td class="text-start">{{ r.kalem }} <small class="text-muted">· Personel (dağıtılan pay)</small></td><td v-for="y in activePlate.life" :key="y">{{ money(r.vals[y] * activePlate.byYear[y].persShare) }}</td></tr></tbody>
+                    </table></div>
+                </div>
+            </div></div>
+        </div>
+
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <script src="engine.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
