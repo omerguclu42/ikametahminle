@@ -80,7 +80,7 @@
         if (!Object.keys(ops).length) return;
         ops['meta/at'] = TS(); ops['meta/by'] = user.email;
         vm.sync.status = 'saving';
-        db.ref(ROOT).update(ops).then(() => { if (vm.sync.status === 'saving') vm.sync.status = 'ok'; })
+        db.ref(ROOT).update(ops).then(() => { if (vm.sync.status === 'saving') vm.sync.status = 'ok'; if (vm.onCloudSaved) vm.onCloudSaved(); })
             .catch(e => { vm.sync.status = 'error'; vm.sync.msg = friendly(e); });
     }
 
