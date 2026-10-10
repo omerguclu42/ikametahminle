@@ -163,7 +163,9 @@ const app = createApp({
             importMsg: '', pasteText: '', showPaste: false,
             histPage: 1, histSize: 100,
 
-            tempVehicle: null, editingVehicleIndex: -1, vehicleModal: null, submitted: false,
+            auth: { state: 'loading', error: '', busy: false, email: '', password: '', user: null },
+            sync: { status: 'idle', msg: '', loaded: false, online: true },
+            tempVehicle: null, editingVehicleIndex: -1, editingVehicleId: null, vehicleModal: null, submitted: false,
             costModal: null, activeCostVehicle: null,
             plateModal: null, activePlate: null,
             confirmModal: null, confirmText: '', confirmInfo: false, confirmResolve: null,
@@ -174,6 +176,11 @@ const app = createApp({
         };
     },
     computed: {
+        authed() { return this.auth.state === 'in' && this.sync.loaded; },
+        syncLabel() {
+            if (!this.sync.online) return 'Çevrimdışı';
+            return { saving: 'Kaydediliyor…', ok: 'Senkron', connecting: 'Bağlanıyor…', error: 'Hata', local: 'Yerel mod' }[this.sync.status] || '';
+        },
         years() { return E.sortedYears(this.settings); },
         isP() { return this.activeTab === 'personelGider'; },
         hdrList() { return this.isP ? this.settings.personelTanimlari : this.settings.giderTanimlari; },
@@ -314,6 +321,8 @@ const app = createApp({
         this.$watch(() => [this.filters.seg, this.filters.vid, this.filters.month, this.plateSearch], () => { this.plateLimit = 100; });
         this.$watch(() => this.filters.seg, () => { if (this.filters.vid !== 'all' && !this.brandOptions.some(v => v.id === this.filters.vid)) this.filters.vid = 'all'; });
         this.$watch(() => this.activeTab, () => { this.headerError = ''; this.newHeader = ''; this.newCategory = ''; this.newAmount = null; });
+        if (window.CloudSync && window.CloudSync.enabled) window.CloudSync.init(this);
+        else { this.auth.state = 'in'; this.sync.loaded = true; this.sync.status = 'local'; }
         this.$watch(() => this.histSize, () => { this.histPage = 1; });
         this.$watch(() => this.histPages, n => { if (this.histPage > n) this.histPage = n; });
     },
@@ -329,6 +338,48 @@ const app = createApp({
             const r = this.confirmResolve; this.confirmResolve = null;
             if (r) r(v);
         },
+
+        /* ---- Giriş / Bulut ---- */
+        async login() {
+            if (this.auth.busy) return;
+            const email = this.auth.email.trim();
+            if (!email || !this.auth.password) { this.auth.error = 'E-posta ve şifre yazın.'; return; }
+            this.auth.busy = true; this.auth.error = '';
+            const err = await window.CloudSync.signIn(email, this.auth.password);
+            this.auth.busy = false;
+            if (err) this.auth.error = err; else this.auth.password = '';
+        },
+        async logout() {
+            if (!await this.askConfirm('Çıkış yapmak istediğinize emin misiniz?')) return;
+            await window.CloudSync.signOut();
+            this.resetLocal();
+        },
+        resetLocal() {
+            clearTimeout(this._t);
+            try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* yoksay */ }
+            this.settings = normalizeSettings(defaultSettings()); this.vehicles = []; this.historicalData = [];
+            this.timeRule = 15; this.filters = { year: 'all', month: 'all', seg: 'all', vid: 'all' };
+        },
+        currentData() { return { settings: this.settings, vehicles: this.vehicles, historicalData: this.historicalData, timeRule: this.timeRule }; },
+        backupLocal() {
+            try { const cur = localStorage.getItem(STORAGE_KEY); if (cur) localStorage.setItem(STORAGE_KEY + '_backup', cur); } catch (e) { /* yoksay */ }
+        },
+        remoteSettings(o) { this.settings = normalizeSettings(o); },
+        remoteTimeRule(n) { this.timeRule = n; },
+        remoteVehiclesReplace(list) { this.vehicles = list.map(normalizeVehicle); },
+        remoteVehicle(v) {
+            const nv = normalizeVehicle(v), i = this.vehicles.findIndex(x => String(x.id) === String(nv.id));
+            if (i > -1) this.vehicles[i] = nv; else this.vehicles.push(nv);
+        },
+        remoteVehicleRemove(id) {
+            const i = this.vehicles.findIndex(x => String(x.id) === String(id));
+            if (i > -1) this.vehicles.splice(i, 1);
+        },
+        remoteVehicleImage(id, img) {
+            const v = this.vehicles.find(x => String(x.id) === String(id));
+            if (v) v.imageBase64 = img || '';
+        },
+        remoteHist(arr) { this.historicalData = arr; },
 
         /* ---- Kayıt ---- */
         scheduleSave() { clearTimeout(this._t); this._t = setTimeout(() => this.saveData(), 400); },
@@ -411,6 +462,7 @@ const app = createApp({
         },
         openVehicleModal(index = -1) {
             this.editingVehicleIndex = index; this.submitted = false;
+            this.editingVehicleId = index > -1 ? this.vehicles[index].id : null;
             this.tempVehicle = index > -1 ? JSON.parse(JSON.stringify(this.vehicles[index])) : this.getEmptyVehicle();
             this.allHeaders.forEach(h => { if (this.tempVehicle.giderler[h] === undefined) this.tempVehicle.giderler[h] = null; });
             this.vehicleModal.show();
@@ -449,7 +501,8 @@ const app = createApp({
             if (this.formInvalid()) return;
             this.tempVehicle.markaModel = this.tempVehicle.markaModel.trim();
             const copy = JSON.parse(JSON.stringify(this.tempVehicle));
-            if (this.editingVehicleIndex > -1) this.vehicles[this.editingVehicleIndex] = copy; else this.vehicles.push(copy);
+            const ei = this.editingVehicleId === null ? -1 : this.vehicles.findIndex(x => String(x.id) === String(this.editingVehicleId));
+            if (ei > -1) this.vehicles[ei] = copy; else this.vehicles.push(copy);
             this.vehicleModal.hide();
         },
         async deleteVehicle(v) {
