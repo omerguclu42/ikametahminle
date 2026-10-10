@@ -144,10 +144,18 @@
                                 <label class="form-label">Kişi başı yıllık tutar (₺)</label>
                                 <div class="mb-3" style="max-width:220px"><num-input v-model="newAmount" :step="1"></num-input></div>
                             </template>
-                            <div class="form-check mb-3" v-else>
-                                <input class="form-check-input" type="checkbox" id="newIsFuel" v-model="newIsFuel">
-                                <label class="form-check-label" for="newIsFuel">Bu başlık <b>yakıt km</b> başlığıdır <span class="text-muted small">(araç formunda yıllık km girilir; yakıt gideri = km ÷ 100 × 100 km tüketim × yakıt fiyatı)</span></label>
-                            </div>
+                            <template v-else>
+                                <label class="form-label">Gider tipi</label>
+                                <select class="form-select mb-2" v-model="newTip"><option v-for="(t, k) in costTypes" :key="k" :value="k">{{ t.ad }}</option></select>
+                                <div class="tip-help mb-3">
+                                    <span v-if="newTip === 'yillik'">Araç formunda <b>yıllık tutar</b> girilir; her yıl enflasyon oranında artar. (Kasko, trafik sigortası, MTV…)</span>
+                                    <span v-else-if="newTip === 'km'">Araç formunda <b>işlem başı tutar</b> ve <b>kaç km'de bir</b> yapıldığı girilir. İşlem sayısı = optimum satış km ÷ km aralığı; yıllık gider = işlem sayısı ÷ optimum satış yılı × tutar, enflasyonla artar. Örn: 100.000 km ÷ 10.000 km = 10 bakım ÷ 3 yıl = yılda 3,33 bakım.</span>
+                                    <span v-else-if="newTip === 'omur'">Araç formunda <b>değişim başı tutar</b> ve <b>ömür boyunca kaç kez</b> değişeceği girilir. Değişimler ömre eşit aralıkla yayılır (optimum satış yılı ÷ adet); 1. değişim ilk yıl girilen fiyatla, sonrakiler yapıldığı yılın enflasyonlu fiyatıyla hesaplanır. Örn: 3 yıl, 2 değişim → 1. yıl ve 1,5. yılda (2. yıl fiyatıyla).</span>
+                                    <span v-else-if="newTip === 'yillikAdet'">Araç formunda <b>birim tutar</b> ve <b>yılda kaç kez</b> yapıldığı girilir. Yıllık gider = adet × birim tutar; birim tutar her yıl enflasyon kadar artar. Örn: 60 × ₺300 = ₺18.000.</span>
+                                    <span v-else-if="newTip === 'tek'">Araç formunda <b>tek seferlik tutar</b> girilir; yalnızca ilk kullanım yılına gider yazılır, sonraki yıllarda tekrar etmez. (GPS cihazı, kaplama… Aboneliği ayrı yıllık gider olarak ekleyin.)</span>
+                                    <span v-else-if="newTip === 'yakit'">Araç formunda <b>yıllık km</b> girilir; yakıt gideri = km ÷ 100 × 100 km tüketim × o yılın yakıt fiyatı.</span>
+                                </div>
+                            </template>
                             <button class="btn btn-orange" @click="addHeader"><i class="bi bi-plus-lg"></i> Ekle</button>
                             <div class="text-danger small mt-2" v-if="headerError">{{ headerError }}</div>
                         </div>
@@ -155,7 +163,7 @@
                 </div>
                 <div class="card shadow-sm border-0">
                     <table class="table align-middle mb-0" v-if="hdrList.length">
-                        <thead class="table-light"><tr><th style="width:44px"></th><th>Başlık</th><th>Kategori</th><th v-if="isP" style="width:240px">Kişi Başı Yıllık Tutar (₺)</th><th v-else style="width:120px" class="text-center">Yakıt KM</th><th style="width:60px"></th></tr></thead>
+                        <thead class="table-light"><tr><th style="width:44px"></th><th>Başlık</th><th>Kategori</th><th v-if="isP" style="width:240px">Kişi Başı Yıllık Tutar (₺)</th><th v-else style="width:300px">Gider Tipi</th><th style="width:60px"></th></tr></thead>
                         <tbody>
                             <tr v-for="(h, i) in hdrList" :key="h.ad" draggable="true"
                                 @dragstart="dragIndex = i" @dragover.prevent @drop="onDrop(i)" :class="{'drag-src': dragIndex === i}">
@@ -163,7 +171,7 @@
                                 <td>{{ h.ad }}</td>
                                 <td><span class="badge bg-light text-dark border">{{ h.kategori }}</span></td>
                                 <td v-if="isP"><num-input v-model="h.tutar" :step="1"></num-input></td>
-                                <td v-else class="text-center"><div class="form-check form-switch d-inline-block" title="Yakıt km başlığı"><input class="form-check-input" type="checkbox" v-model="h.yakitKm"></div></td>
+                                <td v-else><select class="form-select form-select-sm" v-model="h.tip"><option v-for="(t, k) in costTypes" :key="k" :value="k">{{ t.ad }}</option></select></td>
                                 <td class="text-end"><i class="bi bi-trash text-orange cursor-pointer" title="Sil" @click="removeHeader(i)"></i></td>
                             </tr>
                         </tbody>
@@ -353,6 +361,37 @@
                         </div>
                     </div>
                 </div>
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-header bg-white"><h5 class="mb-0">Tedarikçi Günlük Tutarı (₺)</h5></div>
+                    <div class="card-body">
+                        <p class="text-muted">Araç veremediğimiz dosyalar tedarikçiye verilir. Tedarikçiye ödenen günlük tutarı segment ve yıla göre girin. Marj = müşteriye yansıtılan günlük tutar − tedarikçi tutarı. Tutar girilmeyen segment/yılda dosya kaybedilmiş sayılır.
+                            "En kârlı filo" seçeneği tedarikçi marjını da hesaba katar: aracın çalıştığı gün başına maliyeti tedarikçi tutarından düşükse araç eklemek kârlıdır.</p>
+                        <div class="table-responsive">
+                            <table class="table align-middle">
+                                <thead class="table-light"><tr><th style="width:140px">Segment</th><th v-for="y in years" :key="y" style="min-width:150px">{{ y }}</th></tr></thead>
+                                <tbody>
+                                    <tr v-for="s in segments" :key="s">
+                                        <th>{{ s }}</th>
+                                        <td v-for="y in years" :key="s + y"><num-input v-model="settings.tedarikciTutar[s][y]" :step="1"></num-input></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h6 class="text-orange mt-3">Günlük Marj (Müşteri − Tedarikçi)</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm text-end mb-0">
+                                <thead class="table-light"><tr><th class="text-start" style="width:140px">Segment</th><th v-for="y in years" :key="y">{{ y }}</th></tr></thead>
+                                <tbody>
+                                    <tr v-for="s in segments" :key="s">
+                                        <th class="text-start">{{ s }}</th>
+                                        <td v-for="y in years" :key="s + y" :class="Number(settings.tedarikciTutar[s][y]) > 0 ? netClass((Number(settings.gunlukTutar[s][y]) || 0) - Number(settings.tedarikciTutar[s][y])) : 'text-muted'">
+                                            {{ Number(settings.tedarikciTutar[s][y]) > 0 ? money((Number(settings.gunlukTutar[s][y]) || 0) - Number(settings.tedarikciTutar[s][y])) + ' (' + pct(Number(settings.gunlukTutar[s][y]) ? ((Number(settings.gunlukTutar[s][y]) - Number(settings.tedarikciTutar[s][y])) / Number(settings.gunlukTutar[s][y]) * 100) : 0) + ')' : '-' }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- ================= Tahminleme Simülatörü ================= -->
@@ -405,12 +444,12 @@
                         </div>
                         <div class="auto-note mt-3" v-if="isAuto">
                             <i class="bi bi-magic text-orange"></i>
-                            <span v-if="settings.sim.target === 'best'">Her segment için <b>net kârı en yüksek</b> araç sayısı otomatik hesaplanıyor (personel gideri hariç).</span>
+                            <span v-if="settings.sim.target === 'best'">Her segment için <b>{{ hasSupplier ? 'şirket toplam netini (filo + tedarikçi marjı)' : 'net kârı' }} en yüksek</b> yapan araç sayısı otomatik hesaplanıyor (personel gideri hariç).</span>
                             <span v-else>Her segmentte dosyaların en az <b>%{{ settings.sim.target }}</b>'ini karşılayacak <b>en az araç sayısı</b> otomatik hesaplanıyor.</span>
-                            Eksik araç, segmentin en düşük giderli modelinden eklenir; fazla araç en yüksek giderliden çıkarılır.
+                            Eksik araç, segmentin en düşük giderli modelinden eklenir; fazla araç en yüksek giderliden çıkarılır.<span v-if="settings.sim.target === 'best' && hasSupplier"> En kârlı filo, tedarikçi marjı dahil şirket toplam netine göre seçilir.</span>
                             <button class="btn btn-sm btn-outline-orange ms-2" @click="fixCounts">Adetleri Sabitle</button>
                         </div>
-                        <div class="small text-muted mt-2">Dosya, kendi segmentindeki <b>en düşük giderli</b> boş araca verilir. Üst/alt segment açıksa kendi segmentinde boş araç olmayan dosya, diğer segment araçlarının boş kalan zamanlarına verilir (önce en yakın üst, sonra en yakın alt segment). Üst segment araç talep edilen segmentin, alt segment araç kendi segmentinin günlük tutarıyla fiyatlanır.</div>
+                        <div class="small text-muted mt-2">Dosya, kendi segmentindeki <b>en düşük giderli</b> boş araca verilir. Üst/alt segment açıksa kendi segmentinde boş araç olmayan dosya, diğer segment araçlarının boş kalan zamanlarına verilir (önce en yakın alt, sonra en yakın üst segment). Üst segment araç talep edilen segmentin, alt segment araç kendi segmentinin günlük tutarıyla fiyatlanır.</div>
                         <div class="scenario-row mt-3" v-if="settings.scenarios.length">
                             <span class="small text-muted me-1"><i class="bi bi-bookmarks"></i> Kayıtlı senaryolar:</span>
                             <span class="scenario-chip" v-for="s in settings.scenarios" :key="s.id" :class="{active: activeScenarioId === s.id}" :title="scenarioTitle(s)">
@@ -462,12 +501,14 @@
 
                     <!-- Özet kartlar -->
                     <div class="kpi-title">Finansal Sonuç</div>
-                    <div class="row row-cols-2 row-cols-lg-5 g-3 mb-3">
-                        <div class="col"><div class="kpi"><div class="kpi-l">Toplam Gelir</div><div class="kpi-v text-success" :title="money(view.gelir)">{{ shortMoney(view.gelir) }}</div><div class="kpi-s">Kiralama {{ shortMoney(view.total.revenue) }} + Satış {{ shortMoney(view.total.sale) }}</div></div></div>
-                        <div class="col"><div class="kpi"><div class="kpi-l">Araç İşletme Gideri</div><div class="kpi-v text-danger" :title="money(view.total.op)">{{ shortMoney(view.total.op) }}</div><div class="kpi-s">Gider başlıkları + yakıt</div></div></div>
-                        <div class="col"><div class="kpi"><div class="kpi-l">Alış &amp; Finansman</div><div class="kpi-v text-danger" :title="money(view.total.buy)">{{ shortMoney(view.total.buy) }}</div><div class="kpi-s">Araç alış bedeli + kredi faizi</div></div></div>
-                        <div class="col"><div class="kpi"><div class="kpi-l">Personel Gideri</div><div class="kpi-v text-danger" :title="money(view.total.pers)">{{ shortMoney(view.total.pers) }}</div></div></div>
-                        <div class="col"><div class="kpi kpi-hl"><div class="kpi-l">Net Kâr / Zarar</div><div class="kpi-v" :class="netClass(view.total.net)" :title="money(view.total.net)">{{ shortMoney(view.total.net) }}</div><div class="kpi-s">Gelir − tüm giderler</div></div></div>
+                    <div class="kpi-grid-7 mb-3">
+                        <div class="kpi"><div class="kpi-l">Araç Satış Geliri</div><div class="kpi-v text-success" :title="money(view.total.sale)">{{ shortMoney(view.total.sale) }}</div><div class="kpi-s">Ömür sonunda satış</div></div>
+                        <div class="kpi"><div class="kpi-l">Dosya Geliri</div><div class="kpi-v text-success" :title="money(view.total.revenue)">{{ shortMoney(view.total.revenue) }}</div><div class="kpi-s">Çalışılan gün × günlük tutar</div></div>
+                        <div class="kpi"><div class="kpi-l">Araç İşletme Gideri</div><div class="kpi-v text-danger" :title="money(view.total.op)">{{ shortMoney(view.total.op) }}</div><div class="kpi-s">Gider başlıkları + yakıt</div></div>
+                        <div class="kpi"><div class="kpi-l">Alış Gideri</div><div class="kpi-v text-danger" :title="money(view.total.buy)">{{ shortMoney(view.total.buy) }}</div><div class="kpi-s">Araç alış bedeli (anapara)</div></div>
+                        <div class="kpi"><div class="kpi-l">Faiz Gideri</div><div class="kpi-v text-danger" :title="money(view.total.int)">{{ shortMoney(view.total.int) }}</div><div class="kpi-s">Kredili alımların faizi<span v-if="view.total.int"> · alış + faiz toplamının {{ pct(view.total.int / (view.total.buy + view.total.int) * 100) }} kadarı</span></div></div>
+                        <div class="kpi"><div class="kpi-l">Personel Gideri</div><div class="kpi-v text-danger" :title="money(view.total.pers)">{{ shortMoney(view.total.pers) }}</div></div>
+                        <div class="kpi kpi-hl"><div class="kpi-l">Net Kâr / Zarar</div><div class="kpi-v" :class="netClass(view.total.net)" :title="money(view.total.net)">{{ shortMoney(view.total.net) }}</div><div class="kpi-s">Gelirler − tüm giderler</div></div>
                     </div>
                     <div class="kpi-title">Operasyon</div>
                     <div class="row g-3 mb-3">
@@ -476,6 +517,19 @@
                         <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Karşılanan Dosya Oranı</div><div class="kpi-v" :class="ratioClass(view.files.ratio)">{{ pct(view.files.ratio) }}</div><div class="kpi-s"><span class="text-danger">●</span> %50 altı <span class="text-orange">●</span> %50-75 <span class="text-success">●</span> %75 üstü</div></div></div>
                         <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Araç Sayısı</div><div class="kpi-v">{{ formatCurrency(view.plateTotal) }}</div><div class="kpi-s">Hiç dosya almayan: <b :class="view.idlePlates ? 'text-danger' : ''">{{ view.idlePlates }}</b> araç</div></div></div>
                     </div>
+                    <div class="kpi-title">Tedarikçi Analizi <span class="badge bg-secondary" v-if="!hasSupplier">Tedarikçi tutarı girilmedi</span></div>
+                    <div class="row g-3 mb-3" v-if="hasSupplier">
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Tedarikçiye Giden Dosya</div><div class="kpi-v">{{ formatCurrency(view.sup.files) }} <small class="text-muted fs-6">dosya</small></div>
+                            <div class="kpi-s">{{ formatCurrency(view.sup.days) }} kiralama günü (yıllar toplamı)<span v-if="view.sup.lost"> · tedarikçi tutarı olmayan {{ formatCurrency(view.sup.lost) }} dosya kayıp</span></div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Tedarikçi Marjı</div><div class="kpi-v" :class="netClass(view.sup.margin)" :title="money(view.sup.margin)">{{ shortMoney(view.sup.margin) }}</div>
+                            <div class="kpi-s">Müşteri {{ shortMoney(view.sup.revenue) }} − Tedarikçi {{ shortMoney(view.sup.cost) }}</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi kpi-hl"><div class="kpi-l">Şirket Toplam Neti</div><div class="kpi-v" :class="netClass(view.companyNet)" :title="money(view.companyNet)">{{ shortMoney(view.companyNet) }}</div>
+                            <div class="kpi-s">Filo neti + tedarikçi marjı</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Günlük Maliyet: Kendi Araç / Tedarikçi</div>
+                            <div class="kpi-v fs-5"><span :class="view.ownDayCost <= view.sup.avgSup ? 'text-success' : 'text-danger'">{{ money(view.ownDayCost) }}</span> <small class="text-muted">/ {{ money(view.sup.avgSup) }}</small></div>
+                            <div class="kpi-s">{{ view.ownDayCost <= view.sup.avgSup ? 'Kendi aracımız daha ucuz: araç almak kârlı' : 'Tedarikçi daha ucuz: fazla araç zarar ettiriyor' }} (kendi araç = tüm giderler − satış, çalışılan gün başına)</div></div></div>
+                    </div>
+                    <div class="alert alert-light border small py-2 mb-3" v-else>Günlük Tutar sayfasında <a href="#" class="text-orange" @click.prevent="go('gunlukTutar')">tedarikçi günlük tutarlarını</a> girdiğinizde araç veremediğimiz dosyaların tedarikçi marjı, şirket toplam neti ve kendi araç / tedarikçi maliyet karşılaştırması burada görünür.</div>
                     <div class="kpi-title">Yönetim Göstergeleri</div>
                     <div class="row g-3 mb-3">
                         <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Başabaş Doluluk Oranı</div>
@@ -531,10 +585,11 @@
                     <div class="card shadow-sm border-0"><div class="table-responsive">
                         <!-- Yıllık -->
                         <table class="table table-hover align-middle mb-0 text-end" v-if="detailTab === 'yillik'">
-                            <thead class="table-light"><tr><th class="text-start">Yıl</th><th>Aktif Araç</th><th>Çalışılan Gün</th><th>Boşta Gün</th><th>Doluluk</th><th>Kiralama Geliri</th><th>Araç Satışı</th><th>İşletme Gideri</th><th>Alış &amp; Finansman</th><th>Personel Gideri</th><th>Net</th><th>Kümülatif Net</th></tr></thead>
+                            <thead class="table-light"><tr><th class="text-start">Yıl</th><th>Aktif Araç</th><th>Çalışılan Gün</th><th>Boşta Gün</th><th>Doluluk</th><th>Dosya Geliri</th><th>Araç Satışı</th><th>İşletme Gideri</th><th>Alış Gideri</th><th>Faiz Gideri</th><th>Personel Gideri</th><th>Filo Neti</th><th>Kümülatif Net</th><th v-if="hasSupplier">Tedarikçi Marjı</th><th v-if="hasSupplier">Şirket Neti</th></tr></thead>
                             <tbody>
                                 <tr v-for="r in view.yearRows" :key="r.year"><td class="text-start fw-bold">{{ r.year }}</td><td>{{ r.plates }}</td><td>{{ formatCurrency(r.work) }}</td><td>{{ formatCurrency(r.idle) }}</td><td>{{ pct(r.util) }}</td>
-                                    <td>{{ money(r.revenue) }}</td><td>{{ money(r.sale) }}</td><td>{{ money(r.op) }}</td><td>{{ money(r.buy) }}</td><td>{{ money(r.pers) }}</td><td :class="netClass(r.net)">{{ money(r.net) }}</td><td class="fw-bold" :class="netClass(r.cum)">{{ money(r.cum) }}</td></tr>
+                                    <td>{{ money(r.revenue) }}</td><td>{{ money(r.sale) }}</td><td>{{ money(r.op) }}</td><td>{{ money(r.buy) }}</td><td>{{ money(r.int) }}</td><td>{{ money(r.pers) }}</td><td :class="netClass(r.net)">{{ money(r.net) }}</td><td class="fw-bold" :class="netClass(r.cum)">{{ money(r.cum) }}</td>
+                                    <td v-if="hasSupplier" :class="netClass(r.sup)">{{ money(r.sup) }}</td><td v-if="hasSupplier" class="fw-bold" :class="netClass(r.company)">{{ money(r.company) }}</td></tr>
                             </tbody>
                         </table>
                         <!-- Segment -->
@@ -639,7 +694,7 @@
                             <div class="cc-body"><canvas id="chMonthly"></canvas></div></div></div>
                         <div class="col-xl-4"><div class="chart-card">
                             <div class="cc-title">Gelirden Net Sonuca</div>
-                            <div class="cc-sub">Gelirin hangi gider kalemleriyle net sonuca dönüştüğü.</div>
+                            <div class="cc-sub">Gelirin gider kalemleriyle filo netine{{ hasSupplier ? ', tedarikçi marjıyla şirket netine' : '' }} dönüşümü.</div>
                             <div class="cc-body"><canvas id="chWaterfall"></canvas></div></div></div>
                         <div class="col-xl-6"><div class="chart-card">
                             <div class="cc-title">Gider Yapısı</div>
@@ -681,13 +736,13 @@
                         <div class="card-header bg-white d-flex justify-content-between align-items-center"><h6 class="mb-0 text-orange">Senaryo Karşılaştırması</h6>
                             <span class="small text-muted">Tüm yıllar ve tüm segmentler (filtreden bağımsız)</span></div>
                         <div class="table-responsive"><table class="table table-hover align-middle mb-0 text-end">
-                            <thead class="table-light"><tr><th class="text-start">Senaryo</th><th>Araç</th><th>Karşılama</th><th>Doluluk</th><th>Gelir</th><th>Gider</th><th>Net</th><th>Araç Başı Net</th><th></th></tr></thead>
+                            <thead class="table-light"><tr><th class="text-start">Senaryo</th><th>Araç</th><th>Karşılama</th><th>Doluluk</th><th>Gelir</th><th>Gider</th><th>Filo Neti</th><th v-if="hasSupplier">Şirket Neti</th><th>Araç Başı Net</th><th></th></tr></thead>
                             <tbody>
                                 <tr v-for="r in scenarioCompare" :key="r.id || 'cur'" :class="{'table-warning': r.id === null}">
                                     <td class="text-start fw-bold">{{ r.label }}</td><td>{{ formatCurrency(r.plates) }}</td><td :class="ratioClass(r.ratio)">{{ pct(r.ratio) }}</td><td>{{ pct(r.util) }}</td>
-                                    <td>{{ shortMoney(r.gelir) }}</td><td>{{ shortMoney(r.gider) }}</td><td class="fw-bold" :class="netClass(r.net)">{{ shortMoney(r.net) }}</td><td :class="netClass(r.perPlate)">{{ shortMoney(r.perPlate) }}</td>
+                                    <td>{{ shortMoney(r.gelir) }}</td><td>{{ shortMoney(r.gider) }}</td><td class="fw-bold" :class="netClass(r.net)">{{ shortMoney(r.net) }}</td><td v-if="hasSupplier" class="fw-bold" :class="netClass(r.company)">{{ shortMoney(r.company) }}</td><td :class="netClass(r.perPlate)">{{ shortMoney(r.perPlate) }}</td>
                                     <td><button class="btn btn-sm btn-outline-orange" v-if="r.id" @click="applyScenario(settings.scenarios.find(s => s.id === r.id))">Uygula</button></td></tr>
-                                <tr v-if="!settings.scenarios.length"><td colspan="9" class="text-center text-muted small py-3">Karşılaştırma için simülatörde "Senaryoyu Kaydet" ile senaryo kaydedin.</td></tr>
+                                <tr v-if="!settings.scenarios.length"><td colspan="10" class="text-center text-muted small py-3">Karşılaştırma için simülatörde "Senaryoyu Kaydet" ile senaryo kaydedin.</td></tr>
                             </tbody>
                         </table></div>
                     </div>
@@ -813,15 +868,25 @@
                             <num-input v-model="tempVehicle.satisTutari" :step="1" :min="0" :invalid="topInvalid('satisTutari')"></num-input>
                             <div class="form-text">Optimum satış yılı sonunda aracı satacağınız fiyat; gelir kalemi olarak hesaba katılır.</div></div>
                         <div class="mb-3"><label class="form-label">Araç Fotoğrafı <span class="text-muted small">(opsiyonel)</span></label>
-                            <input type="file" class="form-control" accept="image/*" @change="handleImageUpload">
-                            <div class="mt-2 text-center" v-if="tempVehicle.imageBase64"><img :src="tempVehicle.imageBase64" class="img-thumbnail" style="max-height:150px;"></div></div>
+                            <input type="file" class="form-control" accept="image/*" :key="'photo' + photoKey" @change="handleImageUpload">
+                            <div class="mt-2 text-center" v-if="tempVehicle.imageBase64"><img :src="tempVehicle.imageBase64" class="img-thumbnail" style="max-height:150px;">
+                                <div><a href="#" class="small text-danger" @click.prevent="tempVehicle.imageBase64 = ''; photoKey++">Fotoğrafı kaldır</a></div></div></div>
                     </div></div></div>
                     <div class="col-md-8"><div class="card shadow-sm border-0 h-100"><div class="card-body">
                         <h6 class="card-title border-bottom pb-2 text-orange">Gider ve Performans Verileri <small class="text-muted fw-normal">(tüm alanlar zorunlu, 0 girilebilir)</small></h6>
                         <div class="row g-3">
                             <div class="col-md-6" v-for="h in allHeaders" :key="h">
-                                <label class="form-label small text-muted mb-1">{{ h }} <span class="text-orange" v-if="fuelHeaders.includes(h)">(yıllık km → yakıt gideri)</span> <span class="text-danger">*</span></label>
-                                <num-input v-model="tempVehicle.giderler[h]" :step="fieldCfg(h).step" :decimals="fieldCfg(h).decimals" :min="fieldCfg(h).min" :invalid="fieldInvalid(h)"></num-input>
+                                <label class="form-label small text-muted mb-1">{{ h }} <span class="text-danger">*</span></label>
+                                <div class="row g-2" v-if="tipOf(h) && tipOf(h).n">
+                                    <div class="col-7"><div class="mini-label">{{ tipOf(h).tutar }}</div>
+                                        <num-input v-model="tempVehicle.giderler[h]" :step="1" :min="0" :invalid="fieldInvalid(h)"></num-input></div>
+                                    <div class="col-5"><div class="mini-label">{{ tipOf(h).n }}</div>
+                                        <num-input v-model="tempVehicle.giderAdet[h]" :step="1" :min="0" :decimals="hdrByName[h].tip === 'yillikAdet'" :invalid="adetInvalid(h)"></num-input></div>
+                                </div>
+                                <template v-else>
+                                    <div class="mini-label" v-if="tipOf(h)">{{ tipOf(h).tutar }}</div>
+                                    <num-input v-model="tempVehicle.giderler[h]" :step="fieldCfg(h).step" :decimals="fieldCfg(h).decimals" :min="fieldCfg(h).min" :invalid="fieldInvalid(h)"></num-input>
+                                </template>
                             </div>
                         </div>
                         <div class="form-text mt-2" v-if="fuelHeaders.length">Yıllık yakıt gideri = {{ fuelHeaders.join(' / ') }} ÷ 100 × 100 KM tüketim × o yılın yakıt fiyatı. Optimum satış KM yakıt hesabında kullanılmaz; aracın kaç km'de satılacağını gösterir.</div>
@@ -847,7 +912,7 @@
                     <div class="table-responsive"><table class="table table-bordered table-sm text-end">
                         <thead class="table-light"><tr><th class="text-start">Gider Kalemi</th><th v-for="y in years" :key="y">{{ y }}</th><th class="bg-warning-subtle">Toplam</th></tr></thead>
                         <tbody><tr v-for="r in costOf(activeCostVehicle.id).rows" :key="r.kalem">
-                            <td class="text-start">{{ r.kalem }} <small class="text-muted">· {{ r.kategori }}</small></td>
+                            <td class="text-start">{{ r.kalem }} <small class="text-muted">· {{ r.kategori }}</small><div class="text-muted" style="font-size:.72rem" v-if="r.aciklama">{{ r.aciklama }}</div></td>
                             <td v-for="y in years" :key="y">{{ r.vals[y] === undefined ? '—' : money(r.vals[y]) }}</td>
                             <td class="bg-warning-subtle fw-bold">{{ money(Object.values(r.vals).reduce((a, b) => a + b, 0)) }}</td></tr></tbody>
                         <tfoot>
@@ -871,9 +936,9 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
                 <div class="modal-body" v-if="activePlate">
                     <div class="table-responsive mb-3"><table class="table table-sm text-end">
-                        <thead class="table-light"><tr><th class="text-start">Yıl</th><th>Çalışılan Gün</th><th>Boşta Gün</th><th>Kiralama Geliri</th><th>Araç Satışı</th><th>İşletme Gideri</th><th>Alış &amp; Finansman</th><th>Personel Gideri</th><th>Net</th></tr></thead>
+                        <thead class="table-light"><tr><th class="text-start">Yıl</th><th>Çalışılan Gün</th><th>Boşta Gün</th><th>Dosya Geliri</th><th>Araç Satışı</th><th>İşletme Gideri</th><th>Alış Gideri</th><th>Faiz Gideri</th><th>Personel Gideri</th><th>Net</th></tr></thead>
                         <tbody><tr v-for="y in activePlate.life" :key="y"><td class="text-start fw-bold">{{ y }}</td><td>{{ activePlate.byYear[y].work }}</td><td>{{ activePlate.byYear[y].idle }}</td>
-                            <td>{{ money(activePlate.byYear[y].revenue) }}</td><td>{{ money(activePlate.byYear[y].sale) }}</td><td>{{ money(activePlate.byYear[y].op) }}</td><td>{{ money(activePlate.byYear[y].buy) }}</td><td>{{ money(activePlate.byYear[y].pers) }}</td><td :class="netClass(activePlate.byYear[y].net)">{{ money(activePlate.byYear[y].net) }}</td></tr></tbody>
+                            <td>{{ money(activePlate.byYear[y].revenue) }}</td><td>{{ money(activePlate.byYear[y].sale) }}</td><td>{{ money(activePlate.byYear[y].op) }}</td><td>{{ money(activePlate.byYear[y].buy) }}</td><td>{{ money(activePlate.byYear[y].int) }}</td><td>{{ money(activePlate.byYear[y].pers) }}</td><td :class="netClass(activePlate.byYear[y].net)">{{ money(activePlate.byYear[y].net) }}</td></tr></tbody>
                     </table></div>
                     <div class="small text-muted mb-3" v-if="activePlate.cross.length">Üst/alt segment dosyaları: <span v-for="c in activePlate.cross" :key="c.kind + c.req">{{ c.req }} talebi ({{ c.kind === 'up' ? 'üst segment' : 'alt segment' }}): {{ c.files }} dosya, {{ c.days }} gün · </span></div>
                     <h6 class="text-secondary">Gider kalemi detayı</h6>

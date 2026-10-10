@@ -103,28 +103,64 @@
         return { payment: pay, n, totalInterest, total: P + totalInterest, months: list };
     }
 
-    /* Bir araç için yıl bazlı gider tablosu.
-       - Gider başlıkları: baz yılda girilen tutar, sonraki yıllar enflasyonla artar.
-       - "Yakıt KM" olarak işaretli başlık: yıllık km ÷ 100 × 100 km tüketim × o yılın yakıt fiyatı.
-       - Alış: peşin ise ilk yıl; kredili ise taksitler (anapara + faiz) ödendiği yıllara yazılır.
+    /* Gider başlığı tipleri. "n" olan tiplerde araç formunda ikinci bir sayı (adet / km aralığı) girilir. */
+    const COST_TYPES = {
+        yillik: { ad: 'Yıllık tutar', tutar: 'Yıllık tutar (₺)' },
+        km: { ad: 'Km bazlı (bakım gibi)', tutar: 'İşlem başı tutar (₺)', n: 'Kaç km\'de bir' },
+        omur: { ad: 'Ömür boyu adet (lastik gibi)', tutar: 'Değişim başı tutar (₺)', n: 'Ömür boyunca kaç kez' },
+        yillikAdet: { ad: 'Yılda adet × birim fiyat (temizlik gibi)', tutar: 'Birim tutar (₺)', n: 'Yılda kaç kez' },
+        tek: { ad: 'Tek seferlik (sabit gider)', tutar: 'Tek seferlik tutar (₺)' },
+        yakit: { ad: 'Yakıt km', tutar: 'Yıllık km' }
+    };
+    const costType = h => (h && COST_TYPES[h.tip] ? h.tip : (h && h.yakitKm ? 'yakit' : 'yillik'));
+    const fmtN = x => Number(x).toLocaleString('tr-TR', { maximumFractionDigits: 2 });
+
+    /* Bir araç için yıl bazlı gider tablosu. Baz yıl (en düşük yıl) girilen tutardır, sonraki yıllar enflasyonla artar.
+       - yillik: tutar × enflasyon katsayısı
+       - km: işlem sayısı = optimum satış km ÷ kaç km'de bir (aşağı yuvarlanır); yıllık = işlem sayısı ÷ optimum satış yılı × tutar × enflasyon
+       - omur: n değişim ömre eşit aralıkla yayılır; 1. değişim ilk yıl, i. değişim (i-1) × (optimum yıl ÷ n). yılda, o yılın fiyatıyla
+       - yillikAdet: yılda adet × birim tutar × enflasyon
+       - tek: yalnızca ilk kullanım yılında, enflasyonsuz
+       - yakit: yıllık km ÷ 100 × 100 km tüketim × o yılın yakıt fiyatı
+       - Alış: peşin ise ilk yıl; kredili ise anapara ve faiz ödendiği yıllara ayrı kalem olarak yazılır.
          Kredi araç ömründen uzunsa kalan anapara satış yılında kapatılır (kalan faiz doğmaz). */
     function costTable(v, settings) {
         const years = sortedYears(settings), k = inflationFactors(years, settings.enflasyonOranlari || {});
-        const g = v.giderler || {};
-        const opt = Math.max(1, Math.floor(num(g[DEFAULT_HEADERS[0]])) || 1);
+        const g = v.giderler || {}, ga = v.giderAdet || {};
+        const opt = Math.max(1, Math.floor(num(g[DEFAULT_HEADERS[0]])) || 1), optKm = num(g[DEFAULT_HEADERS[1]]);
         const life = years.slice(0, opt);
         const rows = [];
         const lt = num(g[DEFAULT_HEADERS[2]]), prices = (settings.yakitFiyatlari || {})[v.yakitTuru] || {};
         const fuelName = v.yakitTuru === 'Elektrik' ? 'Enerji Gideri' : 'Yakıt Gideri';
         (settings.giderTanimlari || []).forEach(h => {
-            const base = num(g[h.ad]), vals = {};
-            if (h.yakitKm) {
+            const base = num(g[h.ad]), n = num(ga[h.ad]), vals = {}, tip = costType(h);
+            life.forEach(y => { vals[y] = 0; });
+            let kalem = h.ad, kategori = h.kategori || 'Diğer', aciklama = '';
+            if (tip === 'yakit') {
                 life.forEach(y => { vals[y] = (base / 100) * lt * num(prices[y]); });
-                rows.push({ kalem: `${fuelName} (${h.ad})`, kategori: 'Yakıt', grup: 'isletme', vals });
+                kalem = `${fuelName} (${h.ad})`; kategori = 'Yakıt';
+                aciklama = `${fmtN(base)} km/yıl ÷ 100 × ${fmtN(lt)} L × yakıt fiyatı`;
+            } else if (tip === 'km') {
+                const cnt = n > 0 ? Math.floor(optKm / n) : 0, perYear = cnt / opt;
+                life.forEach(y => { vals[y] = perYear * base * k[y]; });
+                aciklama = `${fmtN(optKm)} km ÷ ${fmtN(n)} km = ${cnt} işlem ÷ ${opt} yıl = ${fmtN(perYear)}/yıl × ₺${fmtN(base)}`;
+            } else if (tip === 'omur') {
+                const cnt = Math.max(0, Math.floor(n)), step = cnt ? opt / cnt : 0;
+                for (let i = 0; i < cnt; i++) {
+                    const yi = Math.floor(i * step + 1e-9);
+                    if (yi < life.length) vals[life[yi]] += base * k[life[yi]];
+                }
+                aciklama = cnt ? `${cnt} değişim, ${fmtN(step)} yılda bir (1. değişim ilk yıl) × o yılın fiyatı` : 'değişim yok';
+            } else if (tip === 'yillikAdet') {
+                life.forEach(y => { vals[y] = n * base * k[y]; });
+                aciklama = `yılda ${fmtN(n)} × ₺${fmtN(base)} (birim fiyat enflasyonla artar)`;
+            } else if (tip === 'tek') {
+                if (life.length) vals[life[0]] = base;
+                aciklama = 'tek seferlik, ilk yıl';
             } else {
                 life.forEach(y => { vals[y] = base * k[y]; });
-                rows.push({ kalem: h.ad, kategori: h.kategori || 'Diğer', grup: 'isletme', vals });
             }
+            rows.push({ kalem, kategori, grup: 'isletme', tip, aciklama, vals });
         });
         const P = num(v.alisBedeli), buy = {}, intr = {};
         life.forEach(y => { buy[y] = 0; intr[y] = 0; });
@@ -139,32 +175,35 @@
                 });
             } else buy[life[0]] = P;
         }
-        rows.push({ kalem: 'Araç Alış Bedeli' + (credit ? ' (kredi anapara)' : ''), kategori: 'Alış & Finansman', grup: 'alis', vals: buy });
-        if (credit) rows.push({ kalem: 'Kredi Faizi', kategori: 'Alış & Finansman', grup: 'alis', vals: intr });
-        const totals = {}, opTotals = {}, buyTotals = {}; let total = 0;
+        rows.push({ kalem: 'Araç Alış Bedeli' + (credit ? ' (kredi anapara)' : ''), kategori: 'Araç Alışı', grup: 'alis', vals: buy });
+        if (credit) rows.push({ kalem: 'Kredi Faizi', kategori: 'Finansman (Faiz)', grup: 'faiz', vals: intr });
+        const sumG = (gr, y) => rows.filter(r => r.grup === gr).reduce((s, r) => s + r.vals[y], 0);
+        const totals = {}, opTotals = {}, buyTotals = {}, intTotals = {}; let total = 0;
         life.forEach(y => {
-            opTotals[y] = rows.filter(r => r.grup === 'isletme').reduce((s, r) => s + r.vals[y], 0);
-            buyTotals[y] = rows.filter(r => r.grup === 'alis').reduce((s, r) => s + r.vals[y], 0);
-            totals[y] = opTotals[y] + buyTotals[y]; total += totals[y];
+            opTotals[y] = sumG('isletme', y); buyTotals[y] = sumG('alis', y); intTotals[y] = sumG('faiz', y);
+            totals[y] = opTotals[y] + buyTotals[y] + intTotals[y]; total += totals[y];
         });
         const sold = life.length === opt, sale = sold ? num(v.satisTutari) : 0;
         const netTotal = total - sale;
         const paidInterest = Object.values(intr).reduce((a, b) => a + b, 0);
         return {
-            opt, life, rows, totals, opTotals, buyTotals, total, sold, sale, netTotal,
+            opt, life, rows, totals, opTotals, buyTotals, intTotals, total, sold, sale, netTotal,
             annualNet: netTotal / Math.max(1, life.length),
             loan: { credit, payment: loan.payment, n: loan.n, totalInterest: loan.totalInterest, paidInterest, creditTotal: P + paidInterest }
         };
     }
-    /* Tüm alanlar zorunlu: marka model, alış bedeli, satış tutarı, tüm gider başlıkları; kredili ise vade ve faiz */
+    /* Tüm alanlar zorunlu: marka model, alış bedeli, satış tutarı, tüm gider başlıkları (ve ikinci sayıları); kredili ise vade ve faiz */
     function missingFields(v, settings) {
-        const g = v.giderler || {}, miss = [];
+        const g = v.giderler || {}, ga = v.giderAdet || {}, miss = [];
         if (!v.markaModel || !String(v.markaModel).trim()) miss.push('Marka Model');
         if (!filled(v.alisBedeli)) miss.push('Araç Alış Bedeli');
         if (!filled(v.satisTutari)) miss.push('Araç Satış Tutarı');
         if (v.kredili) { if (!filled(v.vade)) miss.push('Vade'); if (!filled(v.faiz)) miss.push('Faiz'); }
-        const heads = [...DEFAULT_HEADERS, ...((settings && settings.giderTanimlari) || []).map(h => h.ad)];
-        heads.forEach(h => { if (!filled(g[h])) miss.push(h); });
+        DEFAULT_HEADERS.forEach(h => { if (!filled(g[h])) miss.push(h); });
+        ((settings && settings.giderTanimlari) || []).forEach(h => {
+            if (!filled(g[h.ad])) miss.push(h.ad);
+            else if (COST_TYPES[costType(h)].n && !filled(ga[h.ad])) miss.push(h.ad + ' (' + COST_TYPES[costType(h)].n.toLocaleLowerCase('tr') + ')');
+        });
         if (filled(g[DEFAULT_HEADERS[0]]) && num(g[DEFAULT_HEADERS[0]]) < 1) miss.push(DEFAULT_HEADERS[0]);
         return miss;
     }
@@ -206,7 +245,7 @@
        1. aşama: her dosya kendi segmentindeki, gideri en düşük boş araca verilir (kendi segmenti önceliklidir).
        2. aşama (opts.up / opts.down açıksa): karşılanamayan dosyalar, diğer segment araçlarının 1. aşamadan sonra
           gerçekten boş kalan zamanlarına yerleştirilir; böylece bir araç kendi segmentinin dosyasını asla kaçırmaz.
-          Önce en yakın üst segmentler, sonra en yakın alt segmentler denenir.
+          Önce en yakın alt segmentler, sonra en yakın üst segmentler denenir.
        Fiyatlama: üst segment verilirse talep edilen segmentin, alt segment verilirse verilen segmentin günlük tutarı. */
     function simulate(files, units, cutHour, opts) {
         opts = opts || {};
@@ -257,8 +296,8 @@
                 if (a.unit) return;
                 const i = segIdx(a.seg); if (i < 0) return;
                 const cands = [];
-                if (opts.up) for (let j = i + 1; j < SEGMENTS.length; j++) cands.push([SEGMENTS[j], 'up']);
                 if (opts.down) for (let j = i - 1; j >= 0; j--) cands.push([SEGMENTS[j], 'down']);
+                if (opts.up) for (let j = i + 1; j < SEGMENTS.length; j++) cands.push([SEGMENTS[j], 'up']);
                 for (const [sg, kd] of cands) {
                     const pool = pools[sg]; if (!pool) continue;
                     for (const st of pool) {
@@ -322,6 +361,7 @@
         const period = span >= 355 ? YEAR_DAYS : Math.max(1, Math.round(span));
         const scale = span > 370 ? YEAR_DAYS / span : 1;
         const rate = (seg, y) => num(((settings.gunlukTutar || {})[seg] || {})[y]);
+        const sup = (seg, y) => num(((settings.tedarikciTutar || {})[seg] || {})[y]);
 
         // Segment başına modeller: aracın yıllık ortalama net maliyetine göre ucuzdan pahalıya
         const bySeg = {};
@@ -344,28 +384,41 @@
             // Mevcut liste ucuzdan pahalıya sıralı olduğundan: [en ucuz model × (k0 + ek)] + diğer modeller.
             const k0 = existing.filter(v => v === cheapest).length, rest = existing.filter(v => v !== cheapest);
             const comp = N => (N <= E0 ? existing.slice(0, N) : [...Array(k0 + N - E0).fill(cheapest), ...rest]);
-            const rs = {}; // aracın ömrü boyunca bu segmentin günlük tutarları toplamı
-            models.forEach(v => { rs[v.id] = vehicleCosts[v.id].life.reduce((x, y) => x + rate(seg, y), 0); });
-            const f = (k, v) => Math.min(period, Math.round((curve[k] ? curve[k].days : 0) * scale)) * rs[v.id] - vehicleCosts[v.id].netTotal;
+            // Tedarikçi: kendi aracımız olmayan dosya tedarikçiye verilir; marj = müşteri tutarı − tedarikçi tutarı
+            // (tedarikçi tutarı girilmemiş yılda dosya kaybedilmiş sayılır, marj 0)
+            const mg = y => (sup(seg, y) > 0 ? rate(seg, y) - sup(seg, y) : 0);
+            const rs = {}, ms = {}; // aracın ömrü boyunca günlük tutar ve tedarikçi marjı toplamları
+            models.forEach(v => { const L = vehicleCosts[v.id].life; rs[v.id] = L.reduce((x, y) => x + rate(seg, y), 0); ms[v.id] = L.reduce((x, y) => x + mg(y), 0); });
+            const wk = k => Math.min(period, Math.round((curve[k] ? curve[k].days : 0) * scale));
+            const fNet = (k, v) => wk(k) * rs[v.id] - vehicleCosts[v.id].netTotal;
+            const fTot = (k, v) => fNet(k, v) - wk(k) * ms[v.id]; // bu aracın aldığı iş için tedarikçi marjından vazgeçilir
+            const allMg = years.reduce((x, y) => x + mg(y), 0);
+            const base = curve.reduce((x, c, k) => x + wk(k) * allMg, 0); // hiç araç yokken tedarikçi marjı
             const maxN = Math.max(curve.length, E0);
             const total = demand.length, points = [];
-            const pc = [0]; // en ucuz modelin ön toplamları
-            if (cheapest) for (let k = 0; k < k0 + maxN; k++) pc.push(pc[k] + f(k, cheapest));
-            let cumF = 0, acc = 0;
+            const series = fn => { // N = 0..maxN için Σ fn(k, k. araç)
+                const out = [], pc = [0];
+                if (!cheapest) return null;
+                for (let k = 0; k < k0 + maxN; k++) pc.push(pc[k] + fn(k, cheapest));
+                let acc = 0;
+                for (let N = 0; N <= maxN; N++) {
+                    if (N <= E0) { out.push(acc); if (N < E0) acc += fn(N, existing[N]); }
+                    else { const m = k0 + N - E0; let x = pc[m]; rest.forEach((v, j) => { x += fn(m + j, v); }); out.push(x); }
+                }
+                return out;
+            };
+            const sNet = series(fNet), sTot = series(fTot);
+            let cumF = 0;
             for (let N = 0; N <= maxN; N++) {
                 if (N > 0) cumF += (curve[N - 1] || { files: 0 }).files;
-                let net = null;
-                if (cheapest) { // N araçlık filo: k. en ucuz araç, eğrinin k. sırasındaki işi alır
-                    if (N <= E0) { net = acc; if (N < E0) acc += f(N, existing[N]); }
-                    else { const m = k0 + N - E0; net = pc[m]; rest.forEach((v, j) => { net += f(m + j, v); }); }
-                }
-                points.push({ n: N, coverage: total ? cumF / total * 100 : 0, handled: cumF, net });
+                points.push({ n: N, coverage: total ? cumF / total * 100 : 0, handled: cumF, net: sNet ? sNet[N] : null, total: sTot ? sTot[N] + base : null });
             }
-            curves[seg] = { total, peak: curve.length, existing: E0, points, hasModel: !!cheapest };
+            const hasSup = years.some(y => sup(seg, y) > 0);
+            curves[seg] = { total, peak: curve.length, existing: E0, points, hasModel: !!cheapest, hasSup };
             if (target === 'manual') return;
             let N = 0;
             if (target === 'best') {
-                if (cheapest) { let bestNet = 0; points.forEach(p => { if (p.net !== null && p.net > bestNet + 1e-6) { bestNet = p.net; N = p.n; } }); }
+                if (cheapest) { let bestV = points[0].total; points.forEach(p => { if (p.total > bestV + 1e-6) { bestV = p.total; N = p.n; } }); } // filo neti + tedarikçi marjı en yüksek
             } else {
                 const need = Number(target) / 100 * total;
                 N = points.findIndex(p => p.handled >= need - 1e-9); if (N < 0) N = maxN;
@@ -395,9 +448,9 @@
             ct.life.forEach(y => {
                 if (!rate(u.seg, y)) missingRates.add(`${u.seg} / ${y}`);
                 const revenue = revOf(st.price, y) * cap, sale = y === soldYear ? num(u.v.satisTutari) : 0;
-                const op = ct.opTotals[y], buy = ct.buyTotals[y], cost = op + buy;
+                const op = ct.opTotals[y], buy = ct.buyTotals[y], int = ct.intTotals[y], cost = op + buy + int;
                 const mRev = st.m.map(m => revOf(m.price, y));
-                byYear[y] = { work, idle, revenue, sale, op, buy, cost, pers: 0, persShare: 0, net: revenue + sale - cost, mRev };
+                byYear[y] = { work, idle, revenue, sale, op, buy, int, cost, pers: 0, persShare: 0, net: revenue + sale - cost, mRev };
             });
             const months = st.m.map(m => ({ work: Math.round(m.days * scale), files: m.files * scale }));
             return { id: u.id, plate: u.plate, seg: u.seg, vid: u.v.id, model: u.v.markaModel, life: ct.life, work, idle, files: st.files * scale,
@@ -419,7 +472,7 @@
     }
 
     const api = { SEGMENTS, FUELS, DEFAULT_HEADERS, parseDate, formatDate, normSegment, parseCSV, rowsToRecords, tableToRows, missingHeaders,
-        sortedYears, inflationFactors, loanSchedule, costTable, personnelTable, missingFields, isVehicleComplete, simulate, fleetCurve, dailyPeaks,
+        sortedYears, inflationFactors, loanSchedule, costTable, COST_TYPES, costType, personnelTable, missingFields, isVehicleComplete, simulate, fleetCurve, dailyPeaks,
         freeAtOf, buildReport, rentDays };
     if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;
 })(typeof window !== 'undefined' ? window : globalThis);
