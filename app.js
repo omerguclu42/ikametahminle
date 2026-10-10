@@ -32,6 +32,7 @@ function defaultSettings() {
         giderTanimlari: [],
         personelTanimlari: [],
         personelSayisi: null,
+        personelKilit: false,
         personelOrani: null,
         enflasyonYillari: [2026, 2027, 2028, 2029],
         enflasyonOranlari: { 2026: 0, 2027: 35, 2028: 28, 2029: 25 },
@@ -62,6 +63,8 @@ function normalizeSettings(s) {
     s.giderTanimlari.forEach(h => { h.tip = E.costType(h); delete h.yakitKm; });
     if (!Array.isArray(s.personelTanimlari)) s.personelTanimlari = [];
     if (s.personelSayisi === undefined) s.personelSayisi = null;
+    if (s.personelKilit === undefined) s.personelKilit = s.personelSayisi !== null; // önceden elle girilmiş sayı korunur
+    s.personelKilit = !!s.personelKilit;
     if (s.personelOrani === undefined) s.personelOrani = null;
     s.enflasyonYillari = (s.enflasyonYillari && s.enflasyonYillari.length ? s.enflasyonYillari : d.enflasyonYillari).map(Number);
     s.enflasyonOranlari = s.enflasyonOranlari || {};
@@ -706,6 +709,7 @@ const app = createApp({
         else { this.auth.state = 'in'; this.sync.loaded = true; this.sync.status = 'local'; }
         this.$watch(() => this.settings.sim.target, t => { if (t !== 'manual' && this.authed) this.$nextTick(() => this.applyTarget(t)); });
         this.$watch(() => this.authed, a => { if (a && this.settings.sim.target !== 'manual') this.$nextTick(() => this.applyTarget(this.settings.sim.target)); }, { immediate: true });
+        this.$watch(() => [this.persSummary.suggested, this.settings.personelKilit], () => this.syncPersonnel(), { immediate: true });
         this.$watch(() => this.histSize, () => { this.histPage = 1; });
         this.$watch(() => this.histPages, n => { if (this.histPage > n) this.histPage = n; });
         this.$watch(() => [this.ds.type, this.ds.status, this.ds.search, this.ds.size, this.filters.year, this.filters.month, this.filters.seg, this.filters.vid], () => { this.ds.page = 1; });
@@ -736,6 +740,16 @@ const app = createApp({
             this.tip = { show: true, text, x, y: up ? r.top - 8 : r.bottom + 8, up };
         },
         hideTip() { this.tip.show = false; },
+        /* Personel sayısı kilidi: açıkken önerilen sayıdan otomatik; elle değiştirince kilitlenir */
+        onPersInput(v) { this.settings.personelSayisi = v; if (!this.settings.personelKilit) this.settings.personelKilit = true; },
+        togglePersLock() {
+            this.settings.personelKilit = !this.settings.personelKilit;
+            if (!this.settings.personelKilit) this.syncPersonnel();
+        },
+        syncPersonnel() {
+            const sug = this.persSummary.suggested;
+            if (!this.settings.personelKilit && sug !== null && this.settings.personelSayisi !== sug) this.settings.personelSayisi = sug;
+        },
         /* Açılış animasyonu sürerken kapatma isteği Bootstrap'ta yok sayılır; animasyon bitince kapat */
         safeHide(m, id) {
             const el = document.getElementById(id);

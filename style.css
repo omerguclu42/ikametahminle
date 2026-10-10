@@ -258,3 +258,6 @@ tr.cursor-pointer:hover { background: #fff4ec; }
 .kpi-tip { position: fixed; z-index: 3500; width: 340px; background: #343a40; color: #fff; padding: 12px 14px; border-radius: 10px; font-size: .8rem;
     line-height: 1.45; white-space: pre-line; box-shadow: 0 8px 24px rgba(0,0,0,.25); pointer-events: none; }
 .kpi-tip.up { transform: translateY(-100%); }
+.pers-lock { font-size: .78rem; border: 1px solid #dee2e6; }
+.pers-lock.locked { background: #343a40; color: #fff; border-color: #343a40; }
+.pers-lock.open { background: #ebfbee; color: #2b8a3e; border-color: #8ce99a; }

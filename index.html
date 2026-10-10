@@ -98,7 +98,7 @@
                 <div class="card shadow-sm border-0 mb-4" v-if="isP">
                     <div class="card-body">
                         <h6 class="text-orange border-bottom pb-2">Personel Bilgisi</h6>
-                        <div class="row g-3 align-items-end">
+                        <div class="row g-3 align-items-start">
                             <div class="col-sm-6 col-lg-3">
                                 <label class="form-label small">Simülatördeki toplam araç</label>
                                 <input class="form-control form-control-sm bg-light fw-bold" :value="formatCurrency(persSummary.fleet)" readonly title="Tahminleme Simülatöründeki araç sayısı (otomatik)">
@@ -113,11 +113,16 @@
                             </div>
                             <div class="col-sm-6 col-lg-3">
                                 <label class="form-label small fw-bold">Çalıştırılacak personel sayısı</label>
-                                <num-input v-model="settings.personelSayisi" :step="1" :min="0"></num-input>
+                                <num-input :model-value="settings.personelSayisi" @update:model-value="onPersInput" :step="1" :min="0"></num-input>
+                                <button type="button" class="btn btn-sm mt-2 w-100 pers-lock" :class="settings.personelKilit ? 'locked' : 'open'" @click="togglePersLock"
+                                    :title="settings.personelKilit ? 'Kilidi açarsan önerilen personel sayısı otomatik kullanılır' : 'Kilitlersen sayıyı elle belirlersin'">
+                                    <i class="bi" :class="settings.personelKilit ? 'bi-lock-fill' : 'bi-unlock'"></i>
+                                    {{ settings.personelKilit ? 'Kilitli · elle belirleniyor' : 'Kilit açık · önerilenden otomatik' }}</button>
                             </div>
                         </div>
                         <div class="small text-muted mt-2">Önerilen personel = toplam araç ÷ kaç araca 1 personel (yukarı yuvarlanır). Hesapta kullanılan değer <b>çalıştırılacak personel sayısıdır</b>.
-                            <a href="#" class="text-orange" v-if="persSummary.suggested !== null && persSummary.suggested !== settings.personelSayisi" @click.prevent="settings.personelSayisi = persSummary.suggested">Önerileni yaz</a></div>
+                            Kilit açıkken bu sayı önerilen personelden otomatik alınır ve araç sayısı değiştikçe güncellenir; sayıyı elle değiştirirsen kilit kendiliğinden kapanır (kilitlenir).
+                            <span v-if="!settings.personelKilit && persSummary.suggested === null" class="text-danger">Otomatik için "Kaç araca 1 personel" alanını doldurun.</span></div>
                         <div class="small text-muted mt-1">Her başlığın tutarı <b>kişi başı yıllık</b> girilir; gider = tutar × personel sayısı. Enflasyonla yıllara göre artar ve simülatörde araçlara aldıkları dosya oranında dağıtılır.</div>
                         <div class="table-responsive mt-3" v-if="settings.personelTanimlari.length">
                             <table class="table table-sm text-end mb-0">
