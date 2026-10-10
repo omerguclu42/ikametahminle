@@ -11,7 +11,7 @@ const PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
 const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 const TARGETS = [50, 60, 70, 80, 90, 95, 100];
 const EMPTY_FILTERS = () => ({ year: 'all', month: 'all', seg: 'all', vid: 'all' });
-const DEFAULT_SIM = () => ({ target: 'manual', up: false, down: false });
+const DEFAULT_SIM = () => ({ target: 'manual', up: false, down: false, preset: 'manual' });
 
 /* Eski sürümde hazır gelen başlıklar; tek seferlik temizlenir */
 const OLD_SEEDED = ['Yıllık Kasko Maliyeti', 'Yıllık Trafik Sigortası', 'Yıllık MTV', 'Yıllık Bakım Maliyeti (Ort.)', 'Lastik Gideri (Yıllık)'];
@@ -79,6 +79,7 @@ function normalizeSettings(s) {
     s.sim = { ...DEFAULT_SIM(), ...(s.sim || {}) };
     if (s.sim.target !== 'manual' && s.sim.target !== 'best') s.sim.target = TARGETS.includes(Number(s.sim.target)) ? Number(s.sim.target) : 'manual';
     s.sim.up = !!s.sim.up; s.sim.down = !!s.sim.down;
+    if (s.sim.preset !== 'manual' && s.sim.preset !== 'best' && !TARGETS.includes(Number(s.sim.preset))) s.sim.preset = 'manual';
     s.scenarios = Array.isArray(s.scenarios) ? s.scenarios.filter(x => x && x.ad) : [];
     return s;
 }
@@ -201,6 +202,7 @@ const app = createApp({
             auth: { state: 'loading', error: '', busy: false, email: '', password: '', user: null },
             sync: { status: 'idle', msg: '', loaded: false, online: true },
             costClip: null, // kopyalanan gider ve performans verileri
+            tip: { show: false, text: '', x: 0, y: 0, up: false },
             showPass: false, photoKey: 0, costTypes: E.COST_TYPES,
             toast: { show: false, text: '' },
 
@@ -256,7 +258,7 @@ const app = createApp({
         report() {
             return E.buildReport({ vehicles: this.vehicles, files: this.parsedFiles, settings: this.settings, cutHour: this.timeRule, sim: this.settings.sim });
         },
-        isAuto() { return this.settings.sim.target !== 'manual'; },
+        isAuto() { return false; },
         incompleteVehicles() { return this.vehicles.filter(v => !this.isComplete(v)); },
         totalPlates() { return this.report.plates.length; },
         rankOf() { // segment içindeki atama önceliği
@@ -296,7 +298,7 @@ const app = createApp({
         filtersActive() { const f = this.filters; return f.year !== 'all' || f.month !== 'all' || f.seg !== 'all' || f.vid !== 'all'; },
         activeScenarioId() {
             const cur = this.snapshot();
-            const sc = this.settings.scenarios.find(s => JSON.stringify(s.sim) === JSON.stringify(cur.sim)
+            const sc = this.settings.scenarios.find(s => !!s.sim.up === cur.sim.up && !!s.sim.down === cur.sim.down && (s.sim.target || 'manual') === 'manual'
                 && this.vehicles.every(v => (Number(s.counts[v.id]) || 0) === (Number(cur.counts[v.id]) || 0)));
             return sc ? sc.id : null;
         },
@@ -415,8 +417,11 @@ const app = createApp({
             const sup = this.supplierCalc(R, segKeys, mi, yOk);
             yearRows.forEach(r => { r.sup = (sup.byYear[r.year] || {}).margin || 0; r.company = r.net + r.sup; });
             const ownDayCost = total.work ? (gider - total.sale) / total.work : 0;
+            const custDay = sup.ownDays ? sup.ownCust / sup.ownDays : (total.work ? total.revenue / total.work : 0);
+            const supDay = sup.ownDays ? sup.ownSup / sup.ownDays : sup.avgSup;
+            const cmp = { custDay, supDay, ownProfit: custDay - ownDayCost, supProfit: custDay - supDay, adv: supDay - ownDayCost, advTotal: (supDay - ownDayCost) * total.work };
             return {
-                sup, companyNet: total.net + sup.margin, ownDayCost,
+                sup, cmp, companyNet: total.net + sup.margin, ownDayCost,
                 mi, total, gelir, gider, util, breakEven, payback, peak, fleetIn, need80: needFor(80),
                 perFileVeh: pf(total.cost), perFilePers: pf(total.pers), perFileRev: pf(gelir), perFileNet: pf(total.net),
                 plateTotal: plateRows.length, idlePlates: plateRows.filter(r => r.files1 === 0).length,
@@ -433,6 +438,7 @@ const app = createApp({
 
         /* ================= Raporlama ================= */
         curveSegs() { return SEGMENTS.filter(s => (this.report.curves[s] || {}).total > 0); },
+        segsNoModel() { return Object.keys(this.report.curves).filter(k => this.report.curves[k].total > 0 && !this.report.curves[k].hasModel); },
         curveSeg() {
             if (this.filters.seg !== 'all' && this.curveSegs.includes(this.filters.seg)) return this.filters.seg;
             return this.curveSegs.includes(this.reportSeg) ? this.reportSeg : (this.curveSegs[0] || null);
@@ -485,7 +491,7 @@ const app = createApp({
             out.push(`<b>${this.formatCurrency(V.plateTotal)}</b> araçlık filo, ${this.formatCurrency(V.files.total)} dosyanın <b>${this.formatCurrency(V.files.handled)}</b> tanesini karşılıyor (<b>${this.pct(V.files.ratio)}</b>). Filo doluluğu <b>${this.pct(V.util)}</b>, net sonuç <b class="${V.total.net < 0 ? 'text-danger' : 'text-success'}">${this.shortMoney(V.total.net)}</b>.`);
             if (V.peak) out.push(`Dosyaların %80'ini karşılamak için <b>${this.formatCurrency(V.need80)}</b>, tamamını karşılamak için <b>${this.formatCurrency(V.peak)}</b> araç gerekiyor (en yoğun anda aynı anda kirada olması gereken araç sayısı).`);
             const bf = this.bestFleet; if (Object.keys(bf.bySeg).length) out.push(`Kârı en yükselten filo büyüklüğü <b>${this.formatCurrency(bf.n)}</b> araç; bu filo ile personel hariç ${this.hasSupplier ? 'şirket toplam neti (filo + tedarikçi marjı)' : 'net'} <b>${this.shortMoney(bf.net)}</b> (${Object.entries(bf.bySeg).map(([k, p]) => k + ': ' + p.n).join(', ')}).`);
-            if (this.hasSupplier && V.sup.allDays) out.push(`Kendi aracımızın çalışılan gün başı maliyeti <b>${this.money(V.ownDayCost)}</b>, tedarikçinin ortalama günlük tutarı <b>${this.money(V.sup.avgSup)}</b>: ${V.ownDayCost < V.sup.avgSup ? 'kendi araç <b class="text-success">daha ucuz</b>' : 'tedarikçi <b class="text-danger">daha ucuz</b>'}. Tedarikçiye giden ${this.formatCurrency(V.sup.files)} dosyadan marj <b>${this.shortMoney(V.sup.margin)}</b>, şirket toplam neti <b>${this.shortMoney(V.companyNet)}</b>.`);
+            if (this.hasSupplier && V.sup.allDays) { const k = V.cmp; out.push(`Müşteriye günlük ortalama <b>${this.money(k.custDay)}</b> yansıtıyoruz. Kendi aracımızla günlük kârımız <b>${this.money(k.ownProfit)}</b> (gün maliyeti ${this.money(V.ownDayCost)}), tedarikçiyle <b>${this.money(k.supProfit)}</b> (tedarikçi ${this.money(k.supDay)}). Kendi aracı vermek günde <b class="${k.adv >= 0 ? 'text-success' : 'text-danger'}">${this.money(k.adv)}</b> ${k.adv >= 0 ? 'daha kârlı' : 'daha zararlı'}; filonun çalıştığı tüm günlerde toplam <b>${this.shortMoney(k.advTotal)}</b>. Tedarikçiye giden ${this.formatCurrency(V.sup.files)} dosyadan marj ${this.shortMoney(V.sup.margin)}, şirket toplam neti <b>${this.shortMoney(V.companyNet)}</b>.`); }
             if (V.breakEven !== null) out.push(`Başabaş doluluk oranı <b>${this.pct(V.breakEven)}</b>; filo doluluğu bunun altına düşerse zarar edilir (şu an ${this.pct(V.util)}).`);
             if (V.payback) out.push(`Yatırım <b>${V.payback.n}. yılda (${V.payback.year})</b> kendini geri ödüyor.`);
             else if (V.plateTotal) out.push(`Tanımlı yıllar içinde kümülatif net sonuç <b>pozitife dönmüyor</b>.`);
@@ -509,6 +515,48 @@ const app = createApp({
                 rows.push(sumUp(R, s.ad, s.id));
             });
             return rows;
+        },
+        /* Simülatör kartlarının "nasıl hesaplandı" notları (kart başlığına göre) */
+        tips() {
+            const V = this.view, t = V.total, sm = this.shortMoney, m = this.money, f = this.formatCurrency, pc = this.pct, R = this.report;
+            const fs = V.files, k = V.cmp || {}, gider = t.cost + t.pers;
+            return {
+                'Araç Satış Geliri': `Optimum satış yılını dolduran araçların satış tutarı, satış yılında gelir yazılır.\nAraç ömrü tanımlı yıllardan uzunsa satış hesaba katılmaz. Ay filtresi seçiliyken dahil edilmez.\nToplam: ${m(t.sale)}`,
+                'Dosya Geliri': `Her plaka için: çalıştığı gün × günlük tutar (o yılın).\nÜst segment verilen dosya talep edilen segmentin, alt segment verilen dosya verilen segmentin tutarıyla fiyatlanır.\nGün sayımı: tam 24 saatler + 3 saatten fazla artan süre 1 gün.\nToplam: ${f(t.work)} gün → ${m(t.revenue)}`,
+                'Araç İşletme Gideri': `Araç gider başlıklarının yıllık tutarları × araç adedi.\nYıllık tutar: baz yıl girilen tutar, sonraki yıllar enflasyonla artar. Km bazlı (bakım), ömür boyu adet (lastik), yılda adet (temizlik), tek seferlik ve yakıt km başlıkları kendi kurallarıyla hesaplanır. Araç başı detay: araç kartında "İncele".\nToplam: ${m(t.op)}`,
+                'Alış Gideri': `Araç alış bedelinin anapara kısmı.\nPeşin: tamamı ilk kullanım yılına. Kredili: her yıl ödenen taksitlerin anapara kısmı; kredi araç ömründen uzunsa kalan anapara satış yılında kapatılır.\nToplam: ${m(t.buy)}`,
+                'Faiz Gideri': `Kredili araçların taksitlerindeki faiz kısmı (eşit taksit; aylık faiz = yıllık faiz ÷ 12). Taksit ödendiği yıla yazılır.\nToplam: ${m(t.int)}`,
+                'Personel Gideri': `Personel başlıklarının kişi başı yıllık tutarı × çalıştırılacak personel sayısı; enflasyonla artar.\nFilo geneli sabit gider olarak, o yıl aktif araçlara aldıkları dosya oranında dağıtılır.\nToplam: ${m(t.pers)}`,
+                'Net Kâr / Zarar': `Araç satış geliri + dosya geliri − işletme − alış − faiz − personel\n= ${sm(t.sale)} + ${sm(t.revenue)} − ${sm(t.op)} − ${sm(t.buy)} − ${sm(t.int)} − ${sm(t.pers)}\n= ${m(t.net)}`,
+                'Filo Doluluk Oranı': `Çalışılan gün ÷ (çalışılan + boşta gün).\nHer plaka dönem boyunca ${R.period} gün sayılır (tarihçe 1 yıllıksa 365).\n${f(t.work)} ÷ ${f(t.work + t.idle)} = ${pc(V.util)}`,
+                'Karşılanan Dosya': `Talep: tarihçedeki dosya sayısı (seçili segment / ay).\nKarşılanan: araç verilebilen dosyalar (kendi segmenti + açıksa üst/alt segment).\nDosya, teslim anında boşta olan, segmentindeki en düşük giderli araca verilir; iade saati sınırından sonra dönen araç ertesi gün boşa çıkar.\n${f(fs.handled)} / ${f(fs.total)}`,
+                'Karşılanan Dosya Oranı': `Karşılanan dosya ÷ talep edilen dosya.\n${f(fs.handled)} ÷ ${f(fs.total)} = ${pc(fs.ratio)}`,
+                'Araç Sayısı': `Simülasyondaki plaka sayısı (araç kartlarındaki adetlerin toplamı).\nHiç dosya almayan: dönem boyunca bir kez bile kiralanmayan plaka.`,
+                'Kendi Araçla Günlük Kâr': `Müşteriye yansıtılan ortalama günlük tutar − kendi aracımızın günlük maliyeti.\n${m(k.custDay)} − ${m(V.ownDayCost)} = ${m(k.ownProfit)}\nKendi araç günlük maliyeti = (işletme + alış + faiz + personel − araç satışı) ÷ çalışılan gün = ${sm(gider - t.sale)} ÷ ${f(t.work)}`,
+                'Tedarikçiyle Günlük Kâr': `Aynı dosyaları tedarikçiye verseydik: müşteriye yansıtılan ortalama günlük tutar − tedarikçinin ortalama günlük tutarı.\n${m(k.custDay)} − ${m(k.supDay)} = ${m(k.supProfit)}\nOrtalamalar, kendi aracımızın çalıştığı günlerin segment / yıl dağılımıyla ağırlıklandırılır.`,
+                'Kendi Aracın Günlük Avantajı': `Kendi araçla günlük kâr − tedarikçiyle günlük kâr = tedarikçi günlük tutarı − kendi araç günlük maliyeti.\n${m(k.supDay)} − ${m(V.ownDayCost)} = ${m(k.adv)}\nPozitifse araç almak tedarikçiye vermekten kârlı.\nToplam etki = günlük avantaj × çalışılan gün = ${m(k.advTotal)}`,
+                'Tedarikçiye Giden Dosya': `Kendi aracımızla karşılanamayan ve tedarikçiye verilen dosyalar.\nMarj = gün × (müşteri günlük tutarı − tedarikçi günlük tutarı), yıllar toplamı.\nMüşteri ${m(V.sup.revenue)} − tedarikçi ${m(V.sup.cost)} = ${m(V.sup.margin)}\nTedarikçi tutarı girilmemiş segment / yıldaki dosyalar kayıp sayılır.`,
+                'Şirket Toplam Neti': `Filo neti + tedarikçiye giden dosyalardan kalan marj.\n${m(t.net)} + ${m(V.sup.margin)} = ${m(V.companyNet)}`,
+                'Başabaş Doluluk Oranı': `Gelirin çalışılan günle orantılı olduğu kabul edilir; giderler doluluktan bağımsızdır.\nBaşabaş = mevcut doluluk × (tüm giderler − araç satışı) ÷ dosya geliri\n= ${pc(V.util)} × ${sm(gider - t.sale)} ÷ ${sm(t.revenue)} = ${V.breakEven === null ? '-' : pc(V.breakEven)}`,
+                '%100 Karşılama İçin Gereken Araç': `Tarihçede aynı anda kirada olması gereken en yüksek araç sayısı (iade saati kuralı dahil). Bu kadar araçla tüm dosyalar kendi segmentinde karşılanır.\n%80 için: dosyaların %80'ini karşılayan en az araç (${f(V.need80)}). Şu an: ${f(V.fleetIn)} araç.`,
+                'Geri Ödeme Süresi': `Yıllık filo neti toplanarak ilerlenir (alış ilk yıl / taksitlerle gider, satış son yıl gelir).\nKümülatif net ilk kez sıfırın üzerine çıktığı yıl.`,
+                'Ortalama Kiralama Süresi': `Karşılanan dosyaların kiralama gün sayısı ortalaması (24 saat + 3 saat kuralıyla).`,
+                'Dosya Başı Araç Gideri': `Araç gideri (işletme + alış + faiz) ÷ dosya sayısı.\nDosya sayısı her kullanım yılı için tekrar sayılır (yıllar toplamı ${f(t.files)}).\n${sm(t.cost)} ÷ ${f(t.files)} = ${m(V.perFileVeh)}`,
+                'Dosya Başı Personel Gideri': `Personel gideri ÷ dosya sayısı (yıllar toplamı).\n${sm(t.pers)} ÷ ${f(t.files)} = ${m(V.perFilePers)}`,
+                'Dosya Başı Gelir': `(Dosya geliri + araç satışı) ÷ dosya sayısı (yıllar toplamı).\n${sm(t.revenue + t.sale)} ÷ ${f(t.files)} = ${m(V.perFileRev)}`,
+                'Dosya Başı Net': `Net kâr / zarar ÷ dosya sayısı (yıllar toplamı).\n${sm(t.net)} ÷ ${f(t.files)} = ${m(V.perFileNet)}`,
+                'Araç Başı Net (toplam)': `Net kâr / zarar ÷ plaka sayısı.\n${sm(t.net)} ÷ ${f(V.plateTotal)} = ${m(V.netPerPlate)}`,
+                'Çalışılan Gün Başı Net': `Net kâr / zarar ÷ çalışılan gün.\n${sm(t.net)} ÷ ${f(t.work)} = ${m(V.netPerWorkDay)}`,
+                'Araç Başı Ort. Çalışma': `Çalışılan gün ÷ (plaka × kullanım yılı). Bir aracın yılda ortalama kaç gün kirada olduğu.`,
+                'Üst Segmentle Karşılanan': `Kendi segmentinde boş araç olmadığı için üst segment araçla verilen dosyalar.\nÖnce her araç kendi segmentinin dosyalarını alır; kalan dosyalar diğer araçların gerçekten boş kalan zamanlarına yerleştirilir (önce en yakın alt, sonra en yakın üst segment).`,
+                'Üst Segment Teslim Oranı': `Üst segmentle karşılanan dosya ÷ tüm talep.\n${f(V.up.files)} ÷ ${f(fs.total)}`,
+                'Üst Segmentten Ek Gelir': `Üst segment araçla verilen dosyaların geliri: gün × talep edilen segmentin günlük tutarı. Bu dosyalar başka türlü karşılanamayacaktı.`,
+                'Fiyat Farkı (Feragat)': `Üst segment araç verip talep edilen (düşük) segmentin fiyatını aldığımız için vazgeçtiğimiz tutar: gün × (verilen segment tutarı − talep edilen segment tutarı).`,
+                'Alt Segmentle Karşılanan': `Kendi segmentinde boş araç olmadığı için alt segment araçla verilen dosyalar. Alt segment önce denenir.`,
+                'Alt Segment Teslim Oranı': `Alt segmentle karşılanan dosya ÷ tüm talep.\n${f(V.down.files)} ÷ ${f(fs.total)}`,
+                'Alt Segmentten Ek Gelir': `Alt segment araçla verilen dosyaların geliri: gün × verilen (alt) segmentin günlük tutarı.`,
+                'Gelir Kaybı': `Talep edilen segmentin tutarı yerine alt segmentin tutarını aldığımız için eksik kalan: gün × (talep edilen tutar − verilen tutar).`
+            };
         },
         /* Raporlama: her analiz = başlık + bulgu + solda grafik, sağda aynı veri tablo olarak */
         reportBlocks() {
@@ -656,6 +704,8 @@ const app = createApp({
         this.$watch(() => this.activeTab, () => { const mc = document.querySelector('.main-content'); if (mc) mc.scrollTop = 0; this.headerError = ''; this.newHeader = ''; this.newCategory = ''; this.newAmount = null; this.newTip = 'yillik'; });
         if (window.CloudSync && window.CloudSync.enabled) window.CloudSync.init(this);
         else { this.auth.state = 'in'; this.sync.loaded = true; this.sync.status = 'local'; }
+        this.$watch(() => this.settings.sim.target, t => { if (t !== 'manual' && this.authed) this.$nextTick(() => this.applyTarget(t)); });
+        this.$watch(() => this.authed, a => { if (a && this.settings.sim.target !== 'manual') this.$nextTick(() => this.applyTarget(this.settings.sim.target)); }, { immediate: true });
         this.$watch(() => this.histSize, () => { this.histPage = 1; });
         this.$watch(() => this.histPages, n => { if (this.histPage > n) this.histPage = n; });
         this.$watch(() => [this.ds.type, this.ds.status, this.ds.search, this.ds.size, this.filters.year, this.filters.month, this.filters.seg, this.filters.vid], () => { this.ds.page = 1; });
@@ -678,6 +728,14 @@ const app = createApp({
             clearTimeout(this._toastT); this._toastT = setTimeout(() => { this.toast.show = false; }, 1800);
         },
         onCloudSaved() { this.notify('Kaydedildi'); },
+        showTip(e, key) {
+            const text = this.tips[key]; if (!text) return;
+            const r = e.currentTarget.getBoundingClientRect(), W = 340;
+            const x = Math.max(8, Math.min(window.innerWidth - W - 8, r.right - W + 10));
+            const up = r.bottom + 220 > window.innerHeight;
+            this.tip = { show: true, text, x, y: up ? r.top - 8 : r.bottom + 8, up };
+        },
+        hideTip() { this.tip.show = false; },
         /* Açılış animasyonu sürerken kapatma isteği Bootstrap'ta yok sayılır; animasyon bitince kapat */
         safeHide(m, id) {
             const el = document.getElementById(id);
@@ -967,13 +1025,21 @@ const app = createApp({
         showCostDetails(v) { this.activeCostVehicle = v; this.costModal.show(); },
         showPlate(p) { this.activePlate = p; this.plateModal.show(); },
         costOf(id) { return this.report.vehicleCosts[id]; },
-        setCount(v, val) { if (this.isAuto) return; v.count = Math.max(0, Math.floor(Number(val) || 0)); },
-        setTarget(val) { this.settings.sim.target = val === 'manual' || val === 'best' ? val : Number(val); },
-        fixCounts() { // otomatik hesaplanan adetleri manuel adet olarak sabitle
-            this.vehicles.forEach(v => { v.count = this.effCount(v); });
-            this.settings.sim.target = 'manual';
-            this.notify('Adetler sabitlendi');
+        setCount(v, val) { v.count = Math.max(0, Math.floor(Number(val) || 0)); },
+        /* Hedef karşılama oranı: adetleri bir kez hesaplayıp araçlara yazar; sonra adetler elle değiştirilebilir */
+        setTarget(val) {
+            const t = val === 'manual' || val === 'best' ? val : Number(val);
+            if (t === 'manual') { this.settings.sim.preset = 'manual'; return; }
+            this.applyTarget(t);
         },
+        applyTarget(t) {
+            const R = E.buildReport({ vehicles: this.vehicles, files: this.parsedFiles, settings: this.settings, cutHour: this.timeRule, sim: { ...this.settings.sim, target: t } });
+            this.vehicles.forEach(v => { if (v.id in R.counts) v.count = R.counts[v.id]; });
+            this.settings.sim.target = 'manual';
+            this.settings.sim.preset = t;
+            this.notify(t === 'best' ? 'En kârlı filo adetleri uygulandı' : `%${t} hedefine göre adetler uygulandı`);
+        },
+        presetLabel(p) { return p === 'best' ? 'en kârlı filo' : '%' + p + ' karşılama'; },
         clearFilters() { this.filters = EMPTY_FILTERS(); this.plateSearch = ''; },
         async resetScenario() {
             if (!await this.askConfirm('Tüm araç adetleri 0 yapılacak, hedef karşılama oranı "Manuel"e dönecek ve üst/alt segment seçenekleri kapatılacak. Bu değişiklik bütün kullanıcılar için geçerli olur. Devam edilsin mi?')) return;
@@ -983,7 +1049,7 @@ const app = createApp({
         },
         snapshot() {
             const counts = {}; this.vehicles.forEach(v => { counts[v.id] = v.count || 0; });
-            return { counts, sim: { target: this.settings.sim.target, up: !!this.settings.sim.up, down: !!this.settings.sim.down } };
+            return { counts, sim: { target: 'manual', up: !!this.settings.sim.up, down: !!this.settings.sim.down, preset: this.settings.sim.preset || 'manual' } };
         },
         openScenarioModal() { this.scenarioEditId = null; this.scenarioName = ''; this.scenarioNote = ''; this.scenarioError = ''; this.scenarioModal.show(); },
         editScenario(s) { this.scenarioEditId = s.id; this.scenarioName = s.ad; this.scenarioNote = s.not || ''; this.scenarioError = ''; this.scenarioModal.show(); },
@@ -1016,9 +1082,10 @@ const app = createApp({
             if (i > -1) this.settings.scenarios.splice(i, 1);
         },
         scenarioTitle(s) {
-            const t = s.sim.target === 'manual' ? 'Manuel adet' : (s.sim.target === 'best' ? 'En kârlı filo' : '%' + s.sim.target + ' karşılama');
+            const base = s.sim.target && s.sim.target !== 'manual' ? s.sim.target : s.sim.preset;
+            const t = !base || base === 'manual' ? 'Manuel adet' : (base === 'best' ? 'En kârlı filo' : '%' + base + ' hedefi');
             const n = Object.values(s.counts).reduce((a, b) => a + (Number(b) || 0), 0);
-            return `${t}${s.sim.target === 'manual' ? ' · ' + n + ' araç' : ''}${s.sim.up ? ' · üst seg.' : ''}${s.sim.down ? ' · alt seg.' : ''}` + (s.tarih ? ' · ' + new Date(s.tarih).toLocaleDateString('tr-TR') : '');
+            return `${t}${s.sim.target === 'manual' || !s.sim.target ? ' · ' + n + ' araç' : ''}${s.sim.up ? ' · üst seg.' : ''}${s.sim.down ? ' · alt seg.' : ''}` + (s.tarih ? ' · ' + new Date(s.tarih).toLocaleDateString('tr-TR') : '');
         },
 
         /* Tedarikçiye giden dosyalar: hiç araç verilemeyen ya da o yıl ömrü dışındaki plakaya düşen dosyalar.
@@ -1027,7 +1094,7 @@ const app = createApp({
             const sc = R.scale || 1, plate = {}, ts = this.settings.tedarikciTutar || {};
             R.plates.forEach(p => { plate[p.id] = p; });
             const rate = (sg, y) => Number(((this.settings.gunlukTutar || {})[sg] || {})[y]) || 0, sup = (sg, y) => Number((ts[sg] || {})[y]) || 0;
-            const out = { files: 0, lost: 0, days: 0, revenue: 0, cost: 0, margin: 0, byYear: {}, allDays: 0, allCost: 0 };
+            const out = { files: 0, lost: 0, days: 0, revenue: 0, cost: 0, margin: 0, byYear: {}, allDays: 0, allCost: 0, ownDays: 0, ownSup: 0, ownCust: 0 };
             R.years.forEach(y => { out.byYear[y] = { margin: 0, revenue: 0, cost: 0, days: 0 }; });
             R.sim.assign.forEach(a => {
                 if (segKeys && !segKeys.includes(a.seg)) return;
@@ -1037,7 +1104,10 @@ const app = createApp({
                     if (!yOk(y)) return;
                     const s = sup(a.seg, y), d = a.days * sc;
                     if (s > 0) { out.allDays += d; out.allCost += d * s; }
-                    if (p && p.life.includes(y)) return;
+                    if (p && p.life.includes(y)) { // kendi aracımızla verilen gün: aynı gün tedarikçiye verseydik ne öderdik?
+                        if (s > 0) { out.ownDays += d; out.ownSup += d * s; out.ownCust += d * rate(a.kind === 'down' ? a.given : a.seg, y); }
+                        return;
+                    }
                     if (!s) { lost = true; return; }
                     const r = rate(a.seg, y), b = out.byYear[y];
                     out.days += d; out.revenue += d * r; out.cost += d * s; out.margin += d * (r - s);

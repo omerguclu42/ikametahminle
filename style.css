@@ -250,3 +250,11 @@ tr.cursor-pointer:hover { background: #fff4ec; }
 .sc-detail { background: #f8f9fa; border-radius: 8px; padding: 10px; font-size: .82rem; }
 .hdr-act { font-size: 1.05rem; }
 .hdr-act:hover { color: #ff6600 !important; }
+/* Kart açıklama ikonu */
+.kpi { position: relative; }
+.kpi .kpi-l { padding-right: 20px; }
+.kpi-info { position: absolute; top: 10px; right: 10px; color: #adb5bd; cursor: help; font-size: .9rem; }
+.kpi-info:hover { color: #ff6600; }
+.kpi-tip { position: fixed; z-index: 3500; width: 340px; background: #343a40; color: #fff; padding: 12px 14px; border-radius: 10px; font-size: .8rem;
+    line-height: 1.45; white-space: pre-line; box-shadow: 0 8px 24px rgba(0,0,0,.25); pointer-events: none; }
+.kpi-tip.up { transform: translateY(-100%); }
