@@ -163,7 +163,7 @@
                 </div>
                 <div class="card shadow-sm border-0">
                     <table class="table align-middle mb-0" v-if="hdrList.length">
-                        <thead class="table-light"><tr><th style="width:44px"></th><th>Başlık</th><th>Kategori</th><th v-if="isP" style="width:240px">Kişi Başı Yıllık Tutar (₺)</th><th v-else style="width:300px">Gider Tipi</th><th style="width:60px"></th></tr></thead>
+                        <thead class="table-light"><tr><th style="width:44px"></th><th>Başlık</th><th>Kategori</th><th v-if="isP" style="width:240px">Kişi Başı Yıllık Tutar (₺)</th><th v-else style="width:300px">Gider Tipi</th><th style="width:90px"></th></tr></thead>
                         <tbody>
                             <tr v-for="(h, i) in hdrList" :key="h.ad" draggable="true"
                                 @dragstart="dragIndex = i" @dragover.prevent @drop="onDrop(i)" :class="{'drag-src': dragIndex === i}">
@@ -172,7 +172,7 @@
                                 <td><span class="badge bg-light text-dark border">{{ h.kategori }}</span></td>
                                 <td v-if="isP"><num-input v-model="h.tutar" :step="1"></num-input></td>
                                 <td v-else><select class="form-select form-select-sm" v-model="h.tip"><option v-for="(t, k) in costTypes" :key="k" :value="k">{{ t.ad }}</option></select></td>
-                                <td class="text-end"><i class="bi bi-trash text-orange cursor-pointer" title="Sil" @click="removeHeader(i)"></i></td>
+                                <td class="text-end text-nowrap"><i class="bi bi-pencil-square text-secondary cursor-pointer me-3 hdr-act" title="Düzenle" @click="openHeaderEdit(i)"></i><i class="bi bi-trash text-orange cursor-pointer hdr-act" title="Sil" @click="removeHeader(i)"></i></td>
                             </tr>
                         </tbody>
                     </table>
@@ -452,10 +452,14 @@
                         <div class="small text-muted mt-2">Dosya, kendi segmentindeki <b>en düşük giderli</b> boş araca verilir. Üst/alt segment açıksa kendi segmentinde boş araç olmayan dosya, diğer segment araçlarının boş kalan zamanlarına verilir (önce en yakın alt, sonra en yakın üst segment). Üst segment araç talep edilen segmentin, alt segment araç kendi segmentinin günlük tutarıyla fiyatlanır.</div>
                         <div class="scenario-row mt-3" v-if="settings.scenarios.length">
                             <span class="small text-muted me-1"><i class="bi bi-bookmarks"></i> Kayıtlı senaryolar:</span>
-                            <span class="scenario-chip" v-for="s in settings.scenarios" :key="s.id" :class="{active: activeScenarioId === s.id}" :title="scenarioTitle(s)">
-                                <a href="#" @click.prevent="applyScenario(s)">{{ s.ad }}</a>
-                                <i class="bi bi-x" title="Senaryoyu sil" @click="deleteScenario(s)"></i>
-                            </span>
+                            <div class="scenario-card" v-for="s in settings.scenarios" :key="s.id" :class="{active: activeScenarioId === s.id}">
+                                <a href="#" class="sc-name" @click.prevent="applyScenario(s)" :title="'Bu senaryoya geç · ' + scenarioTitle(s) + (s.not ? '\n' + s.not : '')">{{ s.ad }}</a>
+                                <div class="sc-meta">{{ scenarioTitle(s) }}</div>
+                                <div class="sc-actions">
+                                    <a href="#" @click.prevent="editScenario(s)" title="İncele / düzenle"><i class="bi bi-search"></i> İncele</a>
+                                    <a href="#" class="text-danger" @click.prevent="deleteScenario(s)" title="Sil"><i class="bi bi-trash"></i> Sil</a>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -687,48 +691,28 @@
                         </div>
                     </div>
 
-                    <div class="row g-3 mb-3">
-                        <div class="col-xl-8"><div class="chart-card">
-                            <div class="cc-title">Aylık Talep ve Karşılama</div>
-                            <div class="cc-sub">Her ay teslim edilen dosyalar: kendi segmentiyle, üst/alt segmentle karşılanan ve karşılanamayan. Çizgi aylık filo doluluğudur.</div>
-                            <div class="cc-body"><canvas id="chMonthly"></canvas></div></div></div>
-                        <div class="col-xl-4"><div class="chart-card">
-                            <div class="cc-title">Gelirden Net Sonuca</div>
-                            <div class="cc-sub">Gelirin gider kalemleriyle filo netine{{ hasSupplier ? ', tedarikçi marjıyla şirket netine' : '' }} dönüşümü.</div>
-                            <div class="cc-body"><canvas id="chWaterfall"></canvas></div></div></div>
-                        <div class="col-xl-6"><div class="chart-card">
-                            <div class="cc-title">Gider Yapısı</div>
-                            <div class="cc-sub">Toplam giderin kategorilere dağılımı (araç + personel).</div>
-                            <div class="cc-body"><canvas id="chCost"></canvas></div></div></div>
-                        <div class="col-xl-6"><div class="chart-card">
-                            <div class="cc-title">Yıllara Göre Gelir, Gider ve Kümülatif Net</div>
-                            <div class="cc-sub">Kümülatif net çizgisinin sıfırı geçtiği yıl, yatırımın geri döndüğü yıldır.</div>
-                            <div class="cc-body"><canvas id="chYears"></canvas></div></div></div>
-                        <div class="col-xl-6"><div class="chart-card">
-                            <div class="cc-title d-flex justify-content-between align-items-center">Filo Büyüklüğü – Karşılama – Kâr
-                                <select class="form-select form-select-sm w-auto" :value="curveSeg" @change="reportSeg = $event.target.value" :disabled="filters.seg !== 'all'"><option v-for="s in curveSegs" :key="s" :value="s">{{ s }} Segmenti</option></select></div>
-                            <div class="cc-sub" v-if="curveSeg && report.curves[curveSeg]">{{ curveSeg }} segmentinde araç sayısı arttıkça karşılama oranı ve (personel hariç) net nasıl değişir. Nokta mevcut filodur. Tüm talep için {{ report.curves[curveSeg].peak }} araç gerekir.</div>
-                            <div class="cc-body"><canvas id="chCurve"></canvas></div></div></div>
-                        <div class="col-xl-6"><div class="chart-card">
-                            <div class="cc-title">Plaka Bazında Doluluk</div>
-                            <div class="cc-sub">Araçlar doluluğa göre sıralı. Sağdaki kırmızı çubuklar az çalışan, filodan çıkarılabilecek araçlardır.</div>
-                            <div class="cc-body"><canvas id="chPlates"></canvas></div></div></div>
-                        <div class="col-xl-12"><div class="chart-card">
-                            <div class="cc-title">Günlük Araç İhtiyacı ve Filo Kapasitesi</div>
-                            <div class="cc-sub">Her gün aynı anda ihtiyaç duyulan en yüksek araç sayısı, kirada olan araç ve filodaki araç sayısı. Gri alanın kesikli çizgiyi aştığı günlerde dosya karşılanamıyor.</div>
-                            <div class="cc-body"><canvas id="chDaily"></canvas></div></div></div>
-                        <div class="col-xl-4"><div class="chart-card">
-                            <div class="cc-title">Segment Karşılaştırması</div>
-                            <div class="cc-sub">Segment bazında gelir, gider ve net.</div>
-                            <div class="cc-body"><canvas id="chSegments"></canvas></div></div></div>
-                        <div class="col-xl-4"><div class="chart-card">
-                            <div class="cc-title">Kiralama Süresi Dağılımı</div>
-                            <div class="cc-sub">Dosyaların kaç gün sürdüğü (tüm talep).</div>
-                            <div class="cc-body"><canvas id="chRental"></canvas></div></div></div>
-                        <div class="col-xl-4"><div class="chart-card">
-                            <div class="cc-title">Haftanın Günlerine Göre Teslimat</div>
-                            <div class="cc-sub">Hangi günler yoğun; vale/personel planlaması için.</div>
-                            <div class="cc-body"><canvas id="chWeek"></canvas></div></div></div>
+                    <!-- Analizler: solda grafik, sağda aynı verinin tablosu -->
+                    <div class="analysis-card" v-for="(bl, bi) in reportBlocks" :key="bl.id">
+                        <div class="an-head">
+                            <div class="an-num">{{ bi + 1 }}</div>
+                            <div class="flex-grow-1 min-w-0">
+                                <div class="an-title">{{ bl.title }}</div>
+                                <div class="an-sub">{{ bl.sub }}</div>
+                            </div>
+                            <select class="form-select form-select-sm w-auto" v-if="bl.segSelect" :value="curveSeg" @change="reportSeg = $event.target.value" :disabled="filters.seg !== 'all'" title="Segment">
+                                <option v-for="s in curveSegs" :key="s" :value="s">{{ s }} Segmenti</option></select>
+                        </div>
+                        <div class="an-insight" v-if="bl.insight"><i class="bi bi-lightbulb-fill me-2"></i>{{ bl.insight }}</div>
+                        <div class="row g-3">
+                            <div class="col-xl-6"><div class="an-chart"><canvas :id="bl.id"></canvas></div></div>
+                            <div class="col-xl-6"><div class="an-table">
+                                <table class="table table-sm table-hover align-middle mb-0 text-end">
+                                    <thead><tr><th v-for="(col, ci) in bl.cols" :key="ci" :class="{'text-start': ci === 0}">{{ col }}</th></tr></thead>
+                                    <tbody><tr v-for="(row, ri) in bl.rows" :key="ri"><td v-for="(cell, ci) in row" :key="ci" :class="cell.c">{{ cell.v }}</td></tr></tbody>
+                                    <tfoot v-if="bl.foot"><tr><td v-for="(cell, ci) in bl.foot" :key="ci" :class="cell.c">{{ cell.v }}</td></tr></tfoot>
+                                </table>
+                            </div></div>
+                        </div>
                     </div>
 
                     <!-- Senaryo karşılaştırması -->
@@ -739,7 +723,7 @@
                             <thead class="table-light"><tr><th class="text-start">Senaryo</th><th>Araç</th><th>Karşılama</th><th>Doluluk</th><th>Gelir</th><th>Gider</th><th>Filo Neti</th><th v-if="hasSupplier">Şirket Neti</th><th>Araç Başı Net</th><th></th></tr></thead>
                             <tbody>
                                 <tr v-for="r in scenarioCompare" :key="r.id || 'cur'" :class="{'table-warning': r.id === null}">
-                                    <td class="text-start fw-bold">{{ r.label }}</td><td>{{ formatCurrency(r.plates) }}</td><td :class="ratioClass(r.ratio)">{{ pct(r.ratio) }}</td><td>{{ pct(r.util) }}</td>
+                                    <td class="text-start"><b>{{ r.label }}</b><div class="small text-muted text-wrap" style="max-width:320px" v-if="r.id && (settings.scenarios.find(x => x.id === r.id) || {}).not">{{ settings.scenarios.find(x => x.id === r.id).not }}</div></td><td>{{ formatCurrency(r.plates) }}</td><td :class="ratioClass(r.ratio)">{{ pct(r.ratio) }}</td><td>{{ pct(r.util) }}</td>
                                     <td>{{ shortMoney(r.gelir) }}</td><td>{{ shortMoney(r.gider) }}</td><td class="fw-bold" :class="netClass(r.net)">{{ shortMoney(r.net) }}</td><td v-if="hasSupplier" class="fw-bold" :class="netClass(r.company)">{{ shortMoney(r.company) }}</td><td :class="netClass(r.perPlate)">{{ shortMoney(r.perPlate) }}</td>
                                     <td><button class="btn btn-sm btn-outline-orange" v-if="r.id" @click="applyScenario(settings.scenarios.find(s => s.id === r.id))">Uygula</button></td></tr>
                                 <tr v-if="!settings.scenarios.length"><td colspan="10" class="text-center text-muted small py-3">Karşılaştırma için simülatörde "Senaryoyu Kaydet" ile senaryo kaydedin.</td></tr>
@@ -806,20 +790,48 @@
             </div></div>
         </div>
 
-        <!-- ============ Senaryo Kaydet ============ -->
-        <div class="modal fade" id="scenarioModal" tabindex="-1">
-            <div class="modal-dialog modal-dialog-centered" style="max-width:460px"><div class="modal-content border-0 shadow">
-                <div class="modal-header bg-orange text-white"><h5 class="modal-title"><i class="bi bi-bookmark-plus"></i> Senaryoyu Kaydet</h5>
+        <!-- ============ Başlık Düzenle ============ -->
+        <div class="modal fade" id="headerModal" tabindex="-1">
+            <div class="modal-dialog modal-dialog-centered" style="max-width:440px"><div class="modal-content border-0 shadow">
+                <div class="modal-header bg-orange text-white"><h5 class="modal-title"><i class="bi bi-pencil-square"></i> Başlığı Düzenle</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
                 <div class="modal-body">
-                    <label class="form-label">Senaryo adı</label>
-                    <input id="scenarioNameInput" type="text" class="form-control" :class="{'is-invalid': scenarioError}" v-model="scenarioName" placeholder="Örn: Agresif Senaryo" @keyup.enter="saveScenario">
-                    <div class="invalid-feedback d-block" v-if="scenarioError">{{ scenarioError }}</div>
-                    <div class="small text-muted mt-2">Kaydedilecek: araç adetleri, hedef karşılama oranı, üst/alt segment seçenekleri ve filtreler. Senaryoya tıklayınca hepsi bu hâline döner.</div>
+                    <label class="form-label">Başlık</label>
+                    <input id="hdrEditInput" type="text" class="form-control mb-3" :class="{'is-invalid': hdrEdit.error}" v-model="hdrEdit.ad" @keyup.enter="saveHeaderEdit">
+                    <label class="form-label">Kategori</label>
+                    <input type="text" class="form-control" v-model="hdrEdit.kategori" list="catList" @keyup.enter="saveHeaderEdit">
+                    <div class="invalid-feedback d-block" v-if="hdrEdit.error">{{ hdrEdit.error }}</div>
+                    <div class="small text-muted mt-2" v-if="!hdrEdit.isP">Başlığın adını değiştirirseniz araçlarda girilmiş değerler yeni ada taşınır.</div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
-                    <button type="button" class="btn btn-orange" @click="saveScenario">Kaydet</button>
+                    <button type="button" class="btn btn-orange" @click="saveHeaderEdit">Güncelle</button>
+                </div>
+            </div></div>
+        </div>
+
+        <!-- ============ Senaryo Kaydet ============ -->
+        <div class="modal fade" id="scenarioModal" tabindex="-1">
+            <div class="modal-dialog modal-dialog-centered" style="max-width:460px"><div class="modal-content border-0 shadow">
+                <div class="modal-header bg-orange text-white"><h5 class="modal-title"><i class="bi" :class="scenarioEditId ? 'bi-search' : 'bi-bookmark-plus'"></i> {{ scenarioEditId ? 'Senaryoyu İncele' : 'Senaryoyu Kaydet' }}</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <label class="form-label">Senaryo adı <span class="text-danger">*</span></label>
+                    <input id="scenarioNameInput" type="text" class="form-control" :class="{'is-invalid': scenarioError}" v-model="scenarioName" placeholder="Örn: Agresif Senaryo">
+                    <div class="invalid-feedback d-block" v-if="scenarioError">{{ scenarioError }}</div>
+                    <label class="form-label mt-3">Senaryo notu</label>
+                    <textarea class="form-control" rows="4" v-model="scenarioNote" placeholder="Bu senaryoyu neden hazırladık? Varsayımlar, beklenti, kime sunulacak…"></textarea>
+                    <div class="small text-muted mt-2" v-if="!scenarioEditId">Kaydedilecek: araç adetleri, hedef karşılama oranı, üst/alt segment seçenekleri ve filtreler. Senaryo adına tıklayınca hepsi bu hâline döner.</div>
+                    <div class="sc-detail mt-3" v-else-if="editingScenario()">
+                        <div><b>İçerik:</b> {{ scenarioTitle(editingScenario()) }}</div>
+                        <div v-if="editingScenario().by"><b>Kaydeden:</b> {{ editingScenario().by }}</div>
+                        <div class="text-muted mt-1">Burada yalnızca ad ve not güncellenir. Senaryonun araç adetleri ve ayarları kaydedildiği hâliyle kalır.</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
+                    <button type="button" class="btn btn-outline-orange me-auto" v-if="scenarioEditId" @click="applyScenario(editingScenario()); safeHide(scenarioModal, 'scenarioModal')">Bu Senaryoya Geç</button>
+                    <button type="button" class="btn btn-orange" @click="saveScenario">{{ scenarioEditId ? 'Güncelle' : 'Kaydet' }}</button>
                 </div>
             </div></div>
         </div>
@@ -896,7 +908,12 @@
                     </div></div></div>
                 </div></div>
                 <div class="modal-footer">
-                    <span class="text-danger small me-auto" v-if="submitted && formInvalid()">Lütfen kırmızı işaretli zorunlu alanları doldurun.</span>
+                    <div class="me-auto d-flex align-items-center gap-2 flex-wrap">
+                        <button type="button" class="btn btn-outline-secondary" @click="copyCosts" title="Sağdaki gider ve performans verilerini kopyalar (temel bilgiler hariç)"><i class="bi bi-files"></i> Gider Verilerini Kopyala</button>
+                        <button type="button" class="btn btn-outline-orange" :disabled="!costClip" @click="pasteCosts" :title="costClip ? costClip.from + ' verilerini bu araca yapıştırır' : 'Önce bir aracın verilerini kopyalayın'"><i class="bi bi-clipboard-check"></i> Yapıştır</button>
+                        <span class="small text-muted" v-if="costClip">Kopyalanan: <b>{{ costClip.from }}</b></span>
+                        <span class="text-danger small" v-if="submitted && formInvalid()">Lütfen kırmızı işaretli zorunlu alanları doldurun.</span>
+                    </div>
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
                     <button type="button" class="btn btn-orange" @click="saveVehicle">Kaydet</button>
                 </div>

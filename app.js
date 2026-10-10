@@ -200,6 +200,7 @@ const app = createApp({
 
             auth: { state: 'loading', error: '', busy: false, email: '', password: '', user: null },
             sync: { status: 'idle', msg: '', loaded: false, online: true },
+            costClip: null, // kopyalanan gider ve performans verileri
             showPass: false, photoKey: 0, costTypes: E.COST_TYPES,
             toast: { show: false, text: '' },
 
@@ -207,7 +208,8 @@ const app = createApp({
             costModal: null, activeCostVehicle: null,
             plateModal: null, activePlate: null,
             confirmModal: null, confirmText: '', confirmInfo: false, confirmResolve: null,
-            scenarioModal: null, scenarioName: '', scenarioError: '',
+            scenarioModal: null, scenarioName: '', scenarioNote: '', scenarioError: '', scenarioEditId: null,
+            headerModal: null, hdrEdit: { isP: false, index: -1, ad: '', kategori: '', error: '' },
 
             filters: EMPTY_FILTERS(),
             detailTab: 'yillik', plateSearch: '', plateLimit: 100,
@@ -508,6 +510,91 @@ const app = createApp({
             });
             return rows;
         },
+        /* Raporlama: her analiz = başlık + bulgu + solda grafik, sağda aynı veri tablo olarak */
+        reportBlocks() {
+            if (this.activeTab !== 'raporlama' || !this.totalPlates) return [];
+            const V = this.view, R = this.report, f = this.formatCurrency, sm = this.shortMoney, pc = this.pct, money = this.money;
+            const c = (v, cl) => ({ v, c: cl || '' }), nc = n => this.netClass(n), B = [];
+            // 1. Aylık talep ve karşılama
+            const mo = this.monthly.filter(m => m.total), rt = m => (m.total ? m.handled / m.total * 100 : 0);
+            const top = mo.length ? mo.reduce((a, b) => (b.total > a.total ? b : a)) : null, low = mo.length ? mo.reduce((a, b) => (rt(b) < rt(a) ? b : a)) : null;
+            const tm = mo.reduce((a, m) => ({ total: a.total + m.total, handled: a.handled + m.handled, cross: a.cross + m.up + m.down, missed: a.missed + m.missed }), { total: 0, handled: 0, cross: 0, missed: 0 });
+            B.push({ id: 'chMonthly', title: 'Aylık Talep ve Karşılama', sub: 'Her ay gelen dosyaların ne kadarına kendi filomuzla araç verebildik? Turuncu: karşılanan, gri: karşılanamayan. Çizgi aylık filo doluluğu.',
+                insight: top ? `En yoğun ay ${top.m} (${f(top.total)} dosya). En düşük karşılama ${low.m} ayında: ${pc(rt(low))}.` : '',
+                cols: ['Ay', 'Talep', 'Karşılanan', 'Üst/Alt Seg.', 'Karşılanamayan', 'Karşılama', 'Doluluk'],
+                rows: mo.map(m => [c(m.m, 'text-start fw-bold'), c(f(m.total)), c(f(m.handled)), c(f(m.up + m.down)), c(f(m.missed), m.missed ? 'text-danger' : ''), c(pc(rt(m)), this.ratioClass(rt(m))), c(m.util === null ? '-' : pc(m.util))]),
+                foot: [c('Toplam', 'text-start'), c(f(tm.total)), c(f(tm.handled)), c(f(tm.cross)), c(f(tm.missed)), c(pc(tm.total ? tm.handled / tm.total * 100 : 0)), c(pc(V.util))] });
+            // 2. Gelirden net sonuca
+            const t = V.total, gelir = t.revenue + t.sale, sh = x => pc(gelir ? x / gelir * 100 : 0);
+            const wf = [['Dosya Geliri', t.revenue, '+'], ['Araç Satış Geliri', t.sale, '+'], ['Araç İşletme Gideri', -t.op, '−'], ['Alış Gideri', -t.buy, '−'], ['Faiz Gideri', -t.int, '−'], ['Personel Gideri', -t.pers, '−']];
+            const wrows = wf.map(([l, v, sg]) => [c(sg + ' ' + l, 'text-start'), c(money(Math.abs(v)), v < 0 ? 'text-danger' : 'text-success'), c(sh(Math.abs(v)))]);
+            wrows.push([c('= Filo Neti', 'text-start fw-bold'), c(money(t.net), 'fw-bold ' + nc(t.net)), c(sh(t.net))]);
+            if (this.hasSupplier) { wrows.push([c('+ Tedarikçi Marjı', 'text-start'), c(money(V.sup.margin), nc(V.sup.margin)), c(sh(V.sup.margin))]); wrows.push([c('= Şirket Neti', 'text-start fw-bold'), c(money(V.companyNet), 'fw-bold ' + nc(V.companyNet)), c(sh(V.companyNet))]); }
+            B.push({ id: 'chWaterfall', title: 'Gelirden Net Sonuca', sub: 'Toplam gelirin hangi giderlerle azalarak net sonuca dönüştüğü. Yeşil: gelir, kırmızı: gider.',
+                insight: gelir ? `Her 100 ₺ gelirin ${f(t.net / gelir * 100)} ₺'si filo neti olarak kalıyor. En büyük gider kalemi: ${wf.slice(2).reduce((a, b) => (b[1] < a[1] ? b : a))[0]}.` : '',
+                cols: ['Kalem', 'Tutar', 'Gelire Oranı'], rows: wrows });
+            // 3. Gider yapısı
+            const cats = V.catRows.filter(r => r.tutar > 0), bigC = cats[0];
+            B.push({ id: 'chCost', title: 'Gider Yapısı', sub: 'Toplam giderin kategorilere göre dağılımı (araç ve personel giderleri birlikte).',
+                insight: bigC ? `Giderin en büyük kısmı ${bigC.kategori}: ${pc(V.itemTotal ? bigC.tutar / V.itemTotal * 100 : 0)}.` : '',
+                cols: ['Kategori', 'Grup', 'Tutar', 'Pay'],
+                rows: cats.map(r => [c(r.kategori, 'text-start fw-bold'), c(r.grup, 'text-start'), c(money(r.tutar)), c(pc(V.itemTotal ? r.tutar / V.itemTotal * 100 : 0))]),
+                foot: [c('Toplam', 'text-start'), c(''), c(money(V.itemTotal)), c('%100')] });
+            // 4. Yıllar
+            const Y = V.yearRows, cols4 = ['Yıl', 'Gelir', 'Gider', 'Filo Neti', 'Kümülatif'];
+            if (this.hasSupplier) cols4.push('Şirket Neti');
+            B.push({ id: 'chYears', title: 'Yıllara Göre Gelir, Gider ve Kümülatif Net', sub: 'Her yılın geliri ve gideri; turuncu çizgi yıllar ilerledikçe biriken net sonuç. Çizginin sıfırı geçtiği yıl yatırım geri dönmüş olur.',
+                insight: V.payback ? `Yatırım ${V.payback.n}. yılda (${V.payback.year}) kendini geri ödüyor.` : 'Tanımlı yıllar içinde kümülatif net pozitife dönmüyor.',
+                cols: cols4, rows: Y.map(r => { const row = [c(r.year, 'text-start fw-bold'), c(sm(r.revenue + r.sale)), c(sm(r.cost + r.pers)), c(sm(r.net), nc(r.net)), c(sm(r.cum), 'fw-bold ' + nc(r.cum))]; if (this.hasSupplier) row.push(c(sm(r.company), nc(r.company))); return row; }) });
+            // 5. Filo büyüklüğü eğrisi
+            const cs = this.curveSeg, cv = cs ? R.curves[cs] : null;
+            if (cv) {
+                const pts = cv.points, cur = R.plates.filter(p => p.seg === cs).length, crow = [];
+                const mk = (label, p, cl) => { const r = [c(label, 'text-start ' + (cl || '')), c(f(p.n)), c(pc(p.coverage)), c(p.net === null ? '-' : sm(p.net), p.net === null ? '' : nc(p.net))]; if (cv.hasSup) r.push(c(sm(p.total), nc(p.total))); return r; };
+                [50, 60, 70, 80, 90, 95, 100].forEach(x => { const p = pts.find(q => q.handled >= x / 100 * cv.total - 1e-9); if (p) crow.push(mk('%' + x + ' karşılama', p)); });
+                if (pts[cur]) crow.push(mk('Mevcut filo', pts[cur], 'fw-bold text-orange'));
+                let best = null; if (cv.hasModel) { best = pts.reduce((a, p) => (p.total > a.total + 1e-6 ? p : a), pts[0]); crow.push(mk('En kârlı', best, 'fw-bold text-success')); }
+                const cols5 = ['Hedef', 'Araç', 'Karşılama', 'Filo Neti']; if (cv.hasSup) cols5.push('Şirket Neti');
+                const p80 = pts.find(q => q.handled >= 0.8 * cv.total - 1e-9);
+                B.push({ id: 'chCurve', title: 'Filo Büyüklüğü – Karşılama – Kâr', sub: `${cs} segmentinde araç sayısı arttıkça karşılama oranı (turuncu) ve net sonuç (koyu${cv.hasSup ? ', mavi: şirket neti' : ''}) nasıl değişir? Nokta mevcut filodur. Personel gideri hariçtir.`,
+                    insight: `${cs} segmentinde %80 karşılama için ${p80 ? f(p80.n) : '-'} araç, tamamı için ${f(cv.peak)} araç gerekir.` + (best ? ` Kârı en yüksek yapan araç sayısı ${f(best.n)}.` : ''),
+                    cols: cols5, rows: crow, segSelect: true });
+            }
+            // 6. Plaka doluluğu
+            const P = V.plateRowsAll, bk = [['%90 ve üzeri', 90, 101], ['%75 – %90', 75, 90], ['%50 – %75', 50, 75], ['%25 – %50', 25, 50], ['%25 altı', -1, 25]];
+            const prow = bk.map(([l, lo, hi]) => { const g = P.filter(r => r.util >= lo && r.util < hi), n = g.length; return [c(l, 'text-start fw-bold'), c(f(n)), c(pc(P.length ? n / P.length * 100 : 0)), c(n ? money(g.reduce((a, r) => a + r.net, 0) / n) : '-', n ? nc(g.reduce((a, r) => a + r.net, 0)) : '')]; });
+            const lowN = P.filter(r => r.util < 50).length;
+            B.push({ id: 'chPlates', title: 'Araç Bazında Doluluk', sub: 'Her çubuk bir araç; araçlar yılın yüzde kaçında kirada olduğuna göre sıralı. Yeşil: %75 üstü, sarı: %50–75, kırmızı: %50 altı.',
+                insight: lowN ? `${f(lowN)} aracın doluluğu %50'nin altında; bu araçlar filodan çıkarılmaya aday.` : 'Tüm araçların doluluğu %50\'nin üzerinde.',
+                cols: ['Doluluk', 'Araç', 'Pay', 'Araç Başı Ort. Net'], rows: prow });
+            // 7. Günlük ihtiyaç
+            const D = this.dailyLoad, byM = {};
+            D.days.forEach(d => { const k = new Date(d.t).getMonth(); const o = byM[k] || (byM[k] = { max: 0, sum: 0, n: 0, over: 0 }); o.max = Math.max(o.max, d.demand); o.sum += d.demand; o.n++; if (d.demand > D.fleet) o.over++; });
+            const over = Object.values(byM).reduce((a, o) => a + o.over, 0), mx = D.days.reduce((a, d) => (d.demand > a.demand ? d : a), { demand: 0, t: 0 });
+            B.push({ id: 'chDaily', title: 'Günlük Araç İhtiyacı ve Filo Kapasitesi', sub: 'Gri alan: her gün aynı anda ihtiyaç duyulan araç. Turuncu: kirada olan aracımız. Kesikli çizgi: filodaki araç sayısı. Gri alan çizgiyi aştığında dosya karşılanamıyor.',
+                insight: `${f(over)} günde ihtiyaç filo kapasitesini (${f(D.fleet)} araç) aştı. En yüksek ihtiyaç ${f(mx.demand)} araç${mx.t ? ' (' + new Date(mx.t).toLocaleDateString('tr-TR') + ')' : ''}.`,
+                cols: ['Ay', 'En Yüksek İhtiyaç', 'Ortalama İhtiyaç', 'Filo', 'Kapasite Aşılan Gün'],
+                rows: Object.keys(byM).map(Number).sort((a, b) => a - b).map(k => { const o = byM[k]; return [c(MONTHS[k], 'text-start fw-bold'), c(f(o.max)), c(f(o.sum / o.n)), c(f(D.fleet)), c(f(o.over), o.over ? 'text-danger fw-bold' : '')]; }) });
+            // 8. Segment
+            const S = V.segmentRows.filter(r => r.cnt || r.total), bestS = S.filter(r => r.cnt).reduce((a, r) => (!a || r.net > a.net ? r : a), null);
+            B.push({ id: 'chSegments', title: 'Segment Karşılaştırması', sub: 'Segment bazında gelir (yeşil), gider (kırmızı) ve net (turuncu).',
+                insight: bestS ? `En kârlı segment ${bestS.seg} (net ${sm(bestS.net)}).` : '',
+                cols: ['Segment', 'Araç', 'Karşılama', 'Gelir', 'Gider', 'Net'],
+                rows: S.map(r => [c(r.seg, 'text-start fw-bold'), c(f(r.cnt)), c(pc(r.ratio), this.ratioClass(r.ratio)), c(sm(r.revenue + r.sale)), c(sm(r.cost + r.pers)), c(sm(r.net), nc(r.net))]) });
+            // 9. Kiralama süresi
+            const H = this.rentalHist, hn = H.reduce((a, h) => a + h.n, 0), le7 = H.slice(0, 5).reduce((a, h) => a + h.n, 0);
+            B.push({ id: 'chRental', title: 'Kiralama Süresi Dağılımı', sub: 'Dosyaların kaç gün sürdüğü (tüm talep).',
+                insight: hn ? `Dosyaların ${pc(le7 / hn * 100)}'i 7 gün veya daha kısa; ortalama kiralama ${(V.avgRental || 0).toLocaleString('tr-TR', { maximumFractionDigits: 1 })} gün.` : '',
+                cols: ['Süre', 'Dosya', 'Pay'], rows: H.map(h => [c(h.l, 'text-start fw-bold'), c(f(h.n)), c(pc(hn ? h.n / hn * 100 : 0))]),
+                foot: [c('Toplam', 'text-start'), c(f(hn)), c('%100')] });
+            // 10. Haftanın günleri
+            const W = this.weekday, wt = W.reduce((a, w) => (w.n > a.n ? w : a), W[0]);
+            B.push({ id: 'chWeek', title: 'Haftanın Günlerine Göre Teslimat', sub: 'Hangi gün kaç dosya teslim edildi; vale ve personel planlaması için.',
+                insight: wt && wt.n ? `En yoğun gün ${wt.l} (${f(wt.n)} teslimat).` : '',
+                cols: ['Gün', 'Teslimat', 'Karşılanan', 'Karşılama'],
+                rows: W.map(w => [c(w.l, 'text-start fw-bold'), c(f(w.n)), c(f(w.h)), c(pc(w.n ? w.h / w.n * 100 : 0), this.ratioClass(w.n ? w.h / w.n * 100 : 0))]) });
+            return B;
+        },
         /* Detaylı veri seti */
         dsRows() {
             const R = this.report, F = this.filters, q = this.ds.search.trim().toLocaleLowerCase('tr');
@@ -559,7 +646,10 @@ const app = createApp({
         this.confirmModal = new bootstrap.Modal(document.getElementById('confirmModal'));
         this.scenarioModal = new bootstrap.Modal(document.getElementById('scenarioModal'));
         document.getElementById('scenarioModal').addEventListener('shown.bs.modal', () => { const el = document.getElementById('scenarioNameInput'); if (el) el.focus(); });
+        this.headerModal = new bootstrap.Modal(document.getElementById('headerModal'));
+        document.getElementById('headerModal').addEventListener('shown.bs.modal', () => { const el = document.getElementById('hdrEditInput'); if (el) el.focus(); });
         this.tempVehicle = this.getEmptyVehicle();
+        try { this.costClip = JSON.parse(localStorage.getItem(STORAGE_KEY + '_kopya') || 'null'); } catch (e) { this.costClip = null; }
         this.$watch(() => [this.settings, this.vehicles, this.historicalData, this.timeRule], () => this.scheduleSave(), { deep: true });
         this.$watch(() => [this.filters.seg, this.filters.vid, this.filters.month, this.plateSearch], () => { this.plateLimit = 100; });
         this.$watch(() => this.filters.seg, () => { if (this.filters.vid !== 'all' && !this.brandOptions.some(v => v.id === this.filters.vid)) this.filters.vid = 'all'; });
@@ -679,6 +769,29 @@ const app = createApp({
             this.hdrList.splice(i, 1);
             if (!this.isP) this.vehicles.forEach(v => { delete v.giderler[h.ad]; if (v.giderAdet) delete v.giderAdet[h.ad]; });
         },
+        openHeaderEdit(i) {
+            const h = this.hdrList[i];
+            this.hdrEdit = { isP: this.isP, index: i, ad: h.ad, kategori: h.kategori || '', error: '' };
+            this.headerModal.show();
+        },
+        saveHeaderEdit() {
+            const e = this.hdrEdit, list = e.isP ? this.settings.personelTanimlari : this.settings.giderTanimlari, h = list[e.index];
+            if (!h) { this.safeHide(this.headerModal, 'headerModal'); return; }
+            const ad = e.ad.trim();
+            if (!ad) { e.error = 'Başlık boş olamaz.'; return; }
+            const taken = e.isP ? list.filter(x => x !== h).map(x => x.ad) : [...DEFAULT_HEADERS, ...list.filter(x => x !== h).map(x => x.ad)];
+            if (taken.some(n => n.toLocaleLowerCase('tr') === ad.toLocaleLowerCase('tr'))) { e.error = 'Bu başlık zaten var.'; return; }
+            const old = h.ad;
+            if (!e.isP && old !== ad) { // araçlarda girilmiş değerler yeni başlığa taşınır
+                this.vehicles.forEach(v => {
+                    if (v.giderler && old in v.giderler) { v.giderler[ad] = v.giderler[old]; delete v.giderler[old]; }
+                    if (v.giderAdet && old in v.giderAdet) { v.giderAdet[ad] = v.giderAdet[old]; delete v.giderAdet[old]; }
+                });
+            }
+            h.ad = ad; h.kategori = e.kategori.trim() || 'Diğer';
+            this.safeHide(this.headerModal, 'headerModal');
+            this.notify('Başlık güncellendi');
+        },
         onDrop(i) {
             if (this.dragIndex < 0 || this.dragIndex === i) { this.dragIndex = -1; return; }
             const list = this.hdrList, [m] = list.splice(this.dragIndex, 1);
@@ -743,6 +856,23 @@ const app = createApp({
             const t = this.tempVehicle;
             if (!t || !t.kredili || !Number(t.vade) || !Number(t.alisBedeli)) return null;
             return E.loanSchedule(t.alisBedeli, t.vade, t.faiz);
+        },
+        /* Gider ve performans verilerini kopyala / yapıştır (temel bilgiler hariç) */
+        copyCosts() {
+            const t = this.tempVehicle, giderler = {}, giderAdet = {};
+            this.allHeaders.forEach(h => { giderler[h] = t.giderler[h]; if (t.giderAdet && h in t.giderAdet) giderAdet[h] = t.giderAdet[h]; });
+            this.costClip = { from: t.markaModel.trim() || 'Adsız araç', giderler: JSON.parse(JSON.stringify(giderler)), giderAdet: JSON.parse(JSON.stringify(giderAdet)) };
+            try { localStorage.setItem(STORAGE_KEY + '_kopya', JSON.stringify(this.costClip)); } catch (e) { /* yoksay */ }
+            this.notify(`'${this.costClip.from}' gider verileri kopyalandı`);
+        },
+        pasteCosts() {
+            const c = this.costClip; if (!c) return;
+            const t = this.tempVehicle;
+            this.allHeaders.forEach(h => {
+                if (h in c.giderler) t.giderler[h] = c.giderler[h];
+                if ((this.tipOf(h) || {}).n && h in c.giderAdet) t.giderAdet[h] = c.giderAdet[h];
+            });
+            this.notify(`'${c.from}' verileri yapıştırıldı`);
         },
         handleImageUpload(event) {
             const file = event.target.files[0]; if (!file) return;
@@ -855,16 +985,25 @@ const app = createApp({
             const counts = {}; this.vehicles.forEach(v => { counts[v.id] = v.count || 0; });
             return { counts, sim: { target: this.settings.sim.target, up: !!this.settings.sim.up, down: !!this.settings.sim.down } };
         },
-        openScenarioModal() { this.scenarioName = ''; this.scenarioError = ''; this.scenarioModal.show(); },
+        openScenarioModal() { this.scenarioEditId = null; this.scenarioName = ''; this.scenarioNote = ''; this.scenarioError = ''; this.scenarioModal.show(); },
+        editScenario(s) { this.scenarioEditId = s.id; this.scenarioName = s.ad; this.scenarioNote = s.not || ''; this.scenarioError = ''; this.scenarioModal.show(); },
         saveScenario() {
-            const ad = this.scenarioName.trim();
+            const ad = this.scenarioName.trim(), not = this.scenarioNote.trim(), id = this.scenarioEditId;
             if (!ad) { this.scenarioError = 'Lütfen senaryoya bir ad verin.'; return; }
-            if (this.settings.scenarios.some(s => s.ad.toLocaleLowerCase('tr') === ad.toLocaleLowerCase('tr'))) { this.scenarioError = 'Bu adla kayıtlı bir senaryo var.'; return; }
+            if (this.settings.scenarios.some(s => s.id !== id && s.ad.toLocaleLowerCase('tr') === ad.toLocaleLowerCase('tr'))) { this.scenarioError = 'Bu adla kayıtlı bir senaryo var.'; return; }
+            if (id) { // incele / düzenle: yalnızca ad ve not güncellenir
+                const sc = this.settings.scenarios.find(s => s.id === id);
+                if (sc) { sc.ad = ad; sc.not = not; }
+                this.safeHide(this.scenarioModal, 'scenarioModal');
+                this.notify(`'${ad}' güncellendi`);
+                return;
+            }
             const snap = this.snapshot();
-            this.settings.scenarios.push({ id: 's' + Date.now(), ad, ...snap, filters: { ...this.filters }, tarih: new Date().toISOString(), by: this.auth.user ? this.auth.user.email : '' });
+            this.settings.scenarios.push({ id: 's' + Date.now(), ad, not, ...snap, filters: { ...this.filters }, tarih: new Date().toISOString(), by: this.auth.user ? this.auth.user.email : '' });
             this.safeHide(this.scenarioModal, 'scenarioModal');
             this.notify(`'${ad}' kaydedildi`);
         },
+        editingScenario() { return this.settings.scenarios.find(s => s.id === this.scenarioEditId) || null; },
         applyScenario(s) {
             this.vehicles.forEach(v => { v.count = Math.max(0, Math.floor(Number(s.counts[v.id]) || 0)); });
             this.settings.sim = { ...DEFAULT_SIM(), ...s.sim };
@@ -946,6 +1085,11 @@ const app = createApp({
             const el = document.getElementById(id); if (!el || !window.Chart) return;
             cfg.options = Object.assign({ responsive: true, maintainAspectRatio: false, animation: false, plugins: {} }, cfg.options || {});
             cfg.options.plugins = Object.assign({ legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } }, cfg.options.plugins || {});
+            if (cfg.type !== 'doughnut') { // arka plan çizgileri olmadan, sade eksenler
+                const sc = cfg.options.scales = cfg.options.scales || {};
+                ['x', 'y'].forEach(k => { sc[k] = sc[k] || {}; });
+                Object.values(sc).forEach(a => { a.grid = { display: false }; a.border = { display: true, color: '#ced4da' }; a.ticks = Object.assign({ color: '#6c757d', font: { size: 11 } }, a.ticks || {}); });
+            }
             this._charts.push(new Chart(el, cfg));
         },
         renderCharts() {
