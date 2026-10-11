@@ -11,7 +11,8 @@ const PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
 const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 const TARGETS = [50, 60, 70, 80, 90, 95, 100];
 const EMPTY_FILTERS = () => ({ year: 'all', month: 'all', seg: 'all', vid: 'all' });
-const DEFAULT_SIM = () => ({ target: 'manual', up: false, down: false, preset: 'manual' });
+const DEFAULT_SIM = () => ({ target: 'manual', up: false, down: false, preset: 'manual', growth: 0 });
+const GROWTHS = [-50, -40, -30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30, 40, 50];
 
 /* Eski sürümde hazır gelen başlıklar; tek seferlik temizlenir */
 const OLD_SEEDED = ['Yıllık Kasko Maliyeti', 'Yıllık Trafik Sigortası', 'Yıllık MTV', 'Yıllık Bakım Maliyeti (Ort.)', 'Lastik Gideri (Yıllık)'];
@@ -81,7 +82,7 @@ function normalizeSettings(s) {
     });
     s.sim = { ...DEFAULT_SIM(), ...(s.sim || {}) };
     if (s.sim.target !== 'manual' && s.sim.target !== 'best') s.sim.target = TARGETS.includes(Number(s.sim.target)) ? Number(s.sim.target) : 'manual';
-    s.sim.up = !!s.sim.up; s.sim.down = !!s.sim.down;
+    s.sim.up = !!s.sim.up; s.sim.down = !!s.sim.down; s.sim.growth = GROWTHS.includes(Number(s.sim.growth)) ? Number(s.sim.growth) : 0;
     if (s.sim.preset !== 'manual' && s.sim.preset !== 'best' && !TARGETS.includes(Number(s.sim.preset))) s.sim.preset = 'manual';
     s.scenarios = Array.isArray(s.scenarios) ? s.scenarios.filter(x => x && x.ad) : [];
     return s;
@@ -190,10 +191,10 @@ const app = createApp({
             fuels: FUELS,
             defaultHeaders: DEFAULT_HEADERS,
             placeholder: PLACEHOLDER,
-            targets: TARGETS,
+            targets: TARGETS, growths: GROWTHS,
             months: MONTHS,
 
-            newHeader: '', newCategory: '', newAmount: null, newTip: 'yillik', headerError: '', dragIndex: -1,
+            newHeader: '', newCategory: '', newAmount: null, newTip: 'yillik', newDefVal: null, newDefN: null, headerError: '', dragIndex: -1,
             newYear: null,
             timeRule: 15,
             settings: defaultSettings(),
@@ -258,8 +259,10 @@ const app = createApp({
             });
             return out;
         },
+        /* Hizmet sayısı değişimi uygulanmış dosyalar */
+        simFiles() { return E.adjustFiles(this.parsedFiles, this.settings.sim.growth); },
         report() {
-            return E.buildReport({ vehicles: this.vehicles, files: this.parsedFiles, settings: this.settings, cutHour: this.timeRule, sim: this.settings.sim });
+            return E.buildReport({ vehicles: this.vehicles, files: this.simFiles, settings: this.settings, cutHour: this.timeRule, sim: this.settings.sim });
         },
         isAuto() { return false; },
         incompleteVehicles() { return this.vehicles.filter(v => !this.isComplete(v)); },
@@ -301,10 +304,11 @@ const app = createApp({
         filtersActive() { const f = this.filters; return f.year !== 'all' || f.month !== 'all' || f.seg !== 'all' || f.vid !== 'all'; },
         activeScenarioId() {
             const cur = this.snapshot();
-            const sc = this.settings.scenarios.find(s => !!s.sim.up === cur.sim.up && !!s.sim.down === cur.sim.down && (s.sim.target || 'manual') === 'manual'
+            const sc = this.settings.scenarios.find(s => !!s.sim.up === cur.sim.up && !!s.sim.down === cur.sim.down && (s.sim.target || 'manual') === 'manual' && (Number(s.sim.growth) || 0) === cur.sim.growth
                 && this.vehicles.every(v => (Number(s.counts[v.id]) || 0) === (Number(cur.counts[v.id]) || 0)));
             return sc ? sc.id : null;
         },
+        optMax() { const o = Number(this.tempVehicle && this.tempVehicle.giderler[DEFAULT_HEADERS[0]]) || 0; return o >= 1 ? Math.floor(o) * 12 : 0; },
         horizonIssues() {
             const n = this.years.length;
             return this.vehicles.filter(v => this.isComplete(v) && Number(v.giderler[DEFAULT_HEADERS[0]]) !== n)
@@ -479,21 +483,23 @@ const app = createApp({
             const days = dem.peaks.map((d, i) => ({ t: dem.start + i * 86400000, demand: d, used: used.peaks[i - off] || 0 }));
             return { days, fleet: this.view.fleetIn };
         },
-        bestFleet() { // segment bazında en kârlı araç sayısı (personel hariç)
-            const out = {}; let n = 0, net = 0;
-            this.view.segKeys.forEach(k => {
-                const c = this.report.curves[k]; if (!c || !c.hasModel) return;
-                const b = c.points.reduce((a, p) => (p.total > a.total + 1e-6 ? p : a), c.points[0]);
-                out[k] = b; n += b.n; net += b.total;
-            });
-            return { bySeg: out, n, net };
+        /* En kârlı filo: her segmentte, aracın getirdiği net (gelir − araç gideri − kilit açıksa personel payı) ile
+           o işi tedarikçiye verseydik kazanacağımız marj karşılaştırılarak araç sayısı seçilir; sonra bu filo
+           tam simülasyondan geçirilip (üst/alt segment, personel, tedarikçi dahil) gerçek şirket neti hesaplanır. */
+        bestFleet() {
+            if (!this.totalPlates && !this.vehicles.length) return null;
+            const R = this.reportFor({ ...this.settings.sim, target: 'best' }), all = () => true;
+            const sum = this.netOf(R), sp = this.supplierCalc(R, null, null, all);
+            const bySeg = {}; R.plates.forEach(p => { bySeg[p.seg] = (bySeg[p.seg] || 0) + 1; });
+            const cur = this.netOf(this.report), cs = this.supplierCalc(this.report, null, null, all);
+            return { n: R.plates.length, bySeg, net: sum, company: sum + sp.margin, curCompany: cur + cs.margin, pers: this.persFor(R.plates.length) };
         },
         execSummary() {
             const V = this.view, R = this.report, out = [];
             if (!R.plates.length && !V.files.total) return out;
             out.push(`<b>${this.formatCurrency(V.plateTotal)}</b> araçlık filo, ${this.formatCurrency(V.files.total)} dosyanın <b>${this.formatCurrency(V.files.handled)}</b> tanesini karşılıyor (<b>${this.pct(V.files.ratio)}</b>). Filo doluluğu <b>${this.pct(V.util)}</b>, net sonuç <b class="${V.total.net < 0 ? 'text-danger' : 'text-success'}">${this.shortMoney(V.total.net)}</b>.`);
             if (V.peak) out.push(`Dosyaların %80'ini karşılamak için <b>${this.formatCurrency(V.need80)}</b>, tamamını karşılamak için <b>${this.formatCurrency(V.peak)}</b> araç gerekiyor (en yoğun anda aynı anda kirada olması gereken araç sayısı).`);
-            const bf = this.bestFleet; if (Object.keys(bf.bySeg).length) out.push(`Kârı en yükselten filo büyüklüğü <b>${this.formatCurrency(bf.n)}</b> araç; bu filo ile personel hariç ${this.hasSupplier ? 'şirket toplam neti (filo + tedarikçi marjı)' : 'net'} <b>${this.shortMoney(bf.net)}</b> (${Object.entries(bf.bySeg).map(([k, p]) => k + ': ' + p.n).join(', ')}).`);
+            const bf = this.bestFleet; if (bf && bf.n) { const d = bf.company - bf.curCompany; out.push(`Kârı en yükselten filo <b>${this.formatCurrency(bf.n)}</b> araç (${Object.entries(bf.bySeg).map(([k, n]) => k + ': ' + n).join(', ')})${this.settings.personelKilit ? '' : ', ' + bf.pers + ' personelle'}. Bu filoyla ${this.hasSupplier ? 'şirket toplam neti' : 'net sonuç'} <b>${this.shortMoney(bf.company)}</b>; mevcut filoya göre <b class="${d >= 0 ? 'text-success' : 'text-danger'}">${d >= 0 ? '+' : ''}${this.shortMoney(d)}</b>.`); }
             if (this.hasSupplier && V.sup.allDays) { const k = V.cmp; out.push(`Müşteriye günlük ortalama <b>${this.money(k.custDay)}</b> yansıtıyoruz. Kendi aracımızla günlük kârımız <b>${this.money(k.ownProfit)}</b> (gün maliyeti ${this.money(V.ownDayCost)}), tedarikçiyle <b>${this.money(k.supProfit)}</b> (tedarikçi ${this.money(k.supDay)}). Kendi aracı vermek günde <b class="${k.adv >= 0 ? 'text-success' : 'text-danger'}">${this.money(k.adv)}</b> ${k.adv >= 0 ? 'daha kârlı' : 'daha zararlı'}; filonun çalıştığı tüm günlerde toplam <b>${this.shortMoney(k.advTotal)}</b>. Tedarikçiye giden ${this.formatCurrency(V.sup.files)} dosyadan marj ${this.shortMoney(V.sup.margin)}, şirket toplam neti <b>${this.shortMoney(V.companyNet)}</b>.`); }
             if (V.breakEven !== null) out.push(`Başabaş doluluk oranı <b>${this.pct(V.breakEven)}</b>; filo doluluğu bunun altına düşerse zarar edilir (şu an ${this.pct(V.util)}).`);
             if (V.payback) out.push(`Yatırım <b>${V.payback.n}. yılda (${V.payback.year})</b> kendini geri ödüyor.`);
@@ -514,7 +520,7 @@ const app = createApp({
             };
             const rows = [sumUp(this.report, 'Mevcut durum', null)];
             this.settings.scenarios.forEach(s => {
-                const R = E.buildReport({ vehicles: this.vehicles, files: this.parsedFiles, settings: this.settings, cutHour: this.timeRule, sim: s.sim, countsOverride: s.counts });
+                const R = this.reportFor({ ...DEFAULT_SIM(), ...s.sim }, s.counts);
                 rows.push(sumUp(R, s.ad, s.id));
             });
             return rows;
@@ -710,6 +716,7 @@ const app = createApp({
         this.$watch(() => this.settings.sim.target, t => { if (t !== 'manual' && this.authed) this.$nextTick(() => this.applyTarget(t)); });
         this.$watch(() => this.authed, a => { if (a && this.settings.sim.target !== 'manual') this.$nextTick(() => this.applyTarget(this.settings.sim.target)); }, { immediate: true });
         this.$watch(() => [this.persSummary.suggested, this.settings.personelKilit], () => this.syncPersonnel(), { immediate: true });
+        this.$watch(() => this.optMax, m => { const t = this.tempVehicle; if (t && t.kredili && m && Number(t.vade) > m) t.vade = m; });
         this.$watch(() => this.histSize, () => { this.histPage = 1; });
         this.$watch(() => this.histPages, n => { if (this.histPage > n) this.histPage = n; });
         this.$watch(() => [this.ds.type, this.ds.status, this.ds.search, this.ds.size, this.filters.year, this.filters.month, this.filters.seg, this.filters.vid], () => { this.ds.page = 1; });
@@ -832,7 +839,10 @@ const app = createApp({
             const item = { ad: name, kategori: this.newCategory.trim() || (this.newTip === 'yakit' ? 'Yakıt' : 'Diğer') };
             if (this.isP) item.tutar = this.newAmount; else item.tip = this.newTip;
             this.hdrList.push(item);
-            this.newHeader = ''; this.newCategory = ''; this.newAmount = null; this.newTip = 'yillik'; this.headerError = '';
+            let applied = 0;
+            if (!this.isP && !this.empty(this.newDefVal)) applied = this.applyHeaderToAll(name, this.newTip, this.newDefVal, this.newDefN);
+            this.newHeader = ''; this.newCategory = ''; this.newAmount = null; this.newTip = 'yillik'; this.newDefVal = null; this.newDefN = null; this.headerError = '';
+            if (applied) this.notify(`'${name}' ${applied} araca uygulandı`);
         },
         async removeHeader(index) {
             const h = this.hdrList[index];
@@ -841,9 +851,18 @@ const app = createApp({
             this.hdrList.splice(i, 1);
             if (!this.isP) this.vehicles.forEach(v => { delete v.giderler[h.ad]; if (v.giderAdet) delete v.giderAdet[h.ad]; });
         },
+        /* Başlığın değerini tüm araçlara yazar (ikinci sayı varsa o da) */
+        applyHeaderToAll(name, tip, val, n) {
+            const needN = !!(this.costTypes[tip] || {}).n;
+            this.vehicles.forEach(v => {
+                v.giderler[name] = val;
+                if (needN && !this.empty(n)) { v.giderAdet = v.giderAdet || {}; v.giderAdet[name] = n; }
+            });
+            return this.vehicles.length;
+        },
         openHeaderEdit(i) {
             const h = this.hdrList[i];
-            this.hdrEdit = { isP: this.isP, index: i, ad: h.ad, kategori: h.kategori || '', error: '' };
+            this.hdrEdit = { isP: this.isP, index: i, ad: h.ad, kategori: h.kategori || '', error: '', val: null, n: null };
             this.headerModal.show();
         },
         saveHeaderEdit() {
@@ -861,8 +880,10 @@ const app = createApp({
                 });
             }
             h.ad = ad; h.kategori = e.kategori.trim() || 'Diğer';
+            let applied = 0;
+            if (!e.isP && !this.empty(e.val)) applied = this.applyHeaderToAll(ad, h.tip, e.val, e.n);
             this.safeHide(this.headerModal, 'headerModal');
-            this.notify('Başlık güncellendi');
+            this.notify(applied ? `Başlık güncellendi, ${applied} araca uygulandı` : 'Başlık güncellendi');
         },
         onDrop(i) {
             if (this.dragIndex < 0 || this.dragIndex === i) { this.dragIndex = -1; return; }
@@ -920,7 +941,8 @@ const app = createApp({
         topInvalid(k) {
             if (!this.submitted) return false;
             const t = this.tempVehicle;
-            if (k === 'vade' || k === 'faiz') return t.kredili && this.empty(t[k]);
+            if (k === 'vade') return t.kredili && (this.empty(t.vade) || (this.optMax && Number(t.vade) > this.optMax));
+            if (k === 'faiz') return t.kredili && this.empty(t[k]);
             return this.empty(t[k]);
         },
         formInvalid() { return !this.tempVehicle.markaModel.trim() || ['alisBedeli', 'satisTutari', 'vade', 'faiz'].some(k => this.topInvalid(k)) || this.allHeaders.some(h => this.fieldInvalid(h) || this.adetInvalid(h)); },
@@ -1047,11 +1069,22 @@ const app = createApp({
             this.applyTarget(t);
         },
         applyTarget(t) {
-            const R = E.buildReport({ vehicles: this.vehicles, files: this.parsedFiles, settings: this.settings, cutHour: this.timeRule, sim: { ...this.settings.sim, target: t } });
+            const R = E.buildReport({ vehicles: this.vehicles, files: this.simFiles, settings: this.settings, cutHour: this.timeRule, sim: { ...this.settings.sim, target: t } });
             this.vehicles.forEach(v => { if (v.id in R.counts) v.count = R.counts[v.id]; });
             this.settings.sim.target = 'manual';
             this.settings.sim.preset = t;
             this.notify(t === 'best' ? 'En kârlı filo adetleri uygulandı' : `%${t} hedefine göre adetler uygulandı`);
+        },
+        async alignOptYears() {
+            const n = this.years.length, list = this.horizonIssues;
+            if (!list.length) return;
+            if (!await this.askConfirm(`${list.map(h => h.ad).join(', ')} araçlarında optimum satış yılı ${n} yıla eşitlenecek (tanımlı yıl sayısı). Kredili araçlarda vade ${n * 12} aydan uzunsa ${n * 12} aya indirilir. Devam edilsin mi?`)) return;
+            this.vehicles.forEach(v => {
+                if (!this.isComplete(v) || Number(v.giderler[DEFAULT_HEADERS[0]]) === n) return;
+                v.giderler[DEFAULT_HEADERS[0]] = n;
+                if (v.kredili && Number(v.vade) > n * 12) v.vade = n * 12;
+            });
+            this.notify(`Optimum satış yılı ${n} yıla eşitlendi`);
         },
         presetLabel(p) { return p === 'best' ? 'en kârlı filo' : '%' + p + ' karşılama'; },
         clearFilters() { this.filters = EMPTY_FILTERS(); this.plateSearch = ''; },
@@ -1063,7 +1096,7 @@ const app = createApp({
         },
         snapshot() {
             const counts = {}; this.vehicles.forEach(v => { counts[v.id] = v.count || 0; });
-            return { counts, sim: { target: 'manual', up: !!this.settings.sim.up, down: !!this.settings.sim.down, preset: this.settings.sim.preset || 'manual' } };
+            return { counts, sim: { target: 'manual', up: !!this.settings.sim.up, down: !!this.settings.sim.down, preset: this.settings.sim.preset || 'manual', growth: this.settings.sim.growth || 0 } };
         },
         openScenarioModal() { this.scenarioEditId = null; this.scenarioName = ''; this.scenarioNote = ''; this.scenarioError = ''; this.scenarioModal.show(); },
         editScenario(s) { this.scenarioEditId = s.id; this.scenarioName = s.ad; this.scenarioNote = s.not || ''; this.scenarioError = ''; this.scenarioModal.show(); },
@@ -1099,9 +1132,21 @@ const app = createApp({
             const base = s.sim.target && s.sim.target !== 'manual' ? s.sim.target : s.sim.preset;
             const t = !base || base === 'manual' ? 'Manuel adet' : (base === 'best' ? 'En kârlı filo' : '%' + base + ' hedefi');
             const n = Object.values(s.counts).reduce((a, b) => a + (Number(b) || 0), 0);
-            return `${t}${s.sim.target === 'manual' || !s.sim.target ? ' · ' + n + ' araç' : ''}${s.sim.up ? ' · üst seg.' : ''}${s.sim.down ? ' · alt seg.' : ''}` + (s.tarih ? ' · ' + new Date(s.tarih).toLocaleDateString('tr-TR') : '');
+            return `${t}${s.sim.target === 'manual' || !s.sim.target ? ' · ' + n + ' araç' : ''}${s.sim.growth ? ' · hizmet ' + (s.sim.growth > 0 ? '+' : '') + s.sim.growth + '%' : ''}${s.sim.up ? ' · üst seg.' : ''}${s.sim.down ? ' · alt seg.' : ''}` + (s.tarih ? ' · ' + new Date(s.tarih).toLocaleDateString('tr-TR') : '');
         },
 
+        /* Personel kilidi açıksa personel sayısı filoya göre önerilir */
+        persFor(n) { const r = Number(this.settings.personelOrani) || 0; return !this.settings.personelKilit && r > 0 ? Math.ceil(n / r) : (Number(this.settings.personelSayisi) || 0); },
+        /* Başka bir senaryo / adet için rapor (kilit açıksa personel o filoya göre) */
+        reportFor(sim, counts) {
+            const files = E.adjustFiles(this.parsedFiles, sim.growth || 0);
+            const run = st => E.buildReport({ vehicles: this.vehicles, files, settings: st, cutHour: this.timeRule, sim, countsOverride: counts });
+            let R = run(this.settings);
+            const pn = this.persFor(R.plates.length);
+            if (pn !== (Number(this.settings.personelSayisi) || 0)) R = run({ ...this.settings, personelSayisi: pn });
+            return R;
+        },
+        netOf(R) { let n = 0; R.plates.forEach(p => p.life.forEach(y => { n += p.byYear[y].net; })); return n; },
         /* Tedarikçiye giden dosyalar: hiç araç verilemeyen ya da o yıl ömrü dışındaki plakaya düşen dosyalar.
            Tedarikçi tutarı girilmemiş segment/yılda dosya kaybedilmiş sayılır. */
         supplierCalc(R, segKeys, mi, yOk) {

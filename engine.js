@@ -1,6 +1,6 @@
 /* Eurocross İkame Filo - Hesap motoru (tarayıcıda ve Node'da çalışır) */
 (function (root) {
-    const SEGMENTS = ['B', 'C', 'C+', 'D', 'D+', 'E'];
+    const SEGMENTS = ['B', 'C', 'C+', 'D', 'D+', 'E', 'E+'];
     const FUELS = ['Benzin', 'Dizel', 'Elektrik'];
     const DEFAULT_HEADERS = ['Optimum Satış Yılı', 'Optimum Satış KM', '100 KM Yakıt Tüketimi (Litre)'];
     const DAY = 86400000;
@@ -311,6 +311,24 @@
         return { byUnit, segStats, assign, spanDays, totalFiles: sorted.length, minS, maxE, dataYear: sorted.length ? new Date(minS).getFullYear() : null };
     }
 
+    /* Hizmet sayısı değişimi (%): her segmentin dosyaları teslim zamanına göre sıralanır ve
+       %p oranındaki dosyalar zamana eşit aralıklarla seçilir (ör. %10 → her 10 dosyadan 1'i).
+       Azalışta seçilen dosyalar çıkarılır, artışta aynı tarih/saatle bir kopyası eklenir.
+       Böylece segment dağılımı, mevsimsellik ve gün içi saatler korunur. */
+    function adjustFiles(files, pct) {
+        pct = num(pct); if (!pct) return files;
+        const p = Math.min(1, Math.abs(pct) / 100), out = [], bySeg = {};
+        files.forEach(f => { (bySeg[f.seg] = bySeg[f.seg] || []).push(f); });
+        Object.values(bySeg).forEach(list => {
+            sortFiles(list).forEach((f, i) => {
+                const pick = Math.floor((i + 1) * p) - Math.floor(i * p) >= 1;
+                if (pct < 0) { if (!pick) out.push(f); }
+                else { out.push(f); if (pick) out.push({ ...f, no: String(f.no) + ' (ek)', ek: true }); }
+            });
+        });
+        return out;
+    }
+
     /* Gün gün en yüksek eşzamanlı sayı. intervals: [[başlangıç, bitiş], ...] */
     function dailyPeaks(intervals) {
         if (!intervals.length) return { start: null, peaks: [] };
@@ -373,6 +391,10 @@
         // Filo eğrisi: her segment için araç sayısına göre karşılama ve (personel hariç) net
         const curves = {}, counts = {}, noModel = [];
         complete.forEach(v => { counts[v.id] = baseCount(v); });
+        // Personel kilidi açıksa personel sayısı = araç ÷ (kaç araca 1 personel); her araç personel maliyetinin 1/oran'ını getirir
+        const pRatio = num(settings.personelOrani), autoPers = !settings.personelKilit && pRatio > 0;
+        const pk = inflationFactors(years, settings.enflasyonOranlari || {}), pPer = (settings.personelTanimlari || []).reduce((a, h) => a + num(h.tutar), 0);
+        const persOf = v => (autoPers ? vehicleCosts[v.id].life.reduce((a, y) => a + pPer * pk[y], 0) / pRatio : 0);
         const allSegs = [...new Set([...SEGMENTS, ...Object.keys(bySeg)])];
         allSegs.forEach(seg => {
             const demand = bySeg[seg] || [], models = segModels[seg] || [];
@@ -391,7 +413,7 @@
             models.forEach(v => { const L = vehicleCosts[v.id].life; rs[v.id] = L.reduce((x, y) => x + rate(seg, y), 0); ms[v.id] = L.reduce((x, y) => x + mg(y), 0); });
             const wk = k => Math.min(period, Math.round((curve[k] ? curve[k].days : 0) * scale));
             const fNet = (k, v) => wk(k) * rs[v.id] - vehicleCosts[v.id].netTotal;
-            const fTot = (k, v) => fNet(k, v) - wk(k) * ms[v.id]; // bu aracın aldığı iş için tedarikçi marjından vazgeçilir
+            const fTot = (k, v) => fNet(k, v) - wk(k) * ms[v.id] - persOf(v); // aracın işi için tedarikçi marjından vazgeçilir; personel payı eklenir
             const allMg = years.reduce((x, y) => x + mg(y), 0);
             const base = curve.reduce((x, c, k) => x + wk(k) * allMg, 0); // hiç araç yokken tedarikçi marjı
             const maxN = Math.max(curve.length, E0);
@@ -414,7 +436,7 @@
                 points.push({ n: N, coverage: total ? cumF / total * 100 : 0, handled: cumF, net: sNet ? sNet[N] : null, total: sTot ? sTot[N] + base : null });
             }
             const hasSup = years.some(y => sup(seg, y) > 0);
-            curves[seg] = { total, peak: curve.length, existing: E0, points, hasModel: !!cheapest, hasSup };
+            curves[seg] = { total, peak: curve.length, existing: E0, points, hasModel: !!cheapest, hasSup, autoPers };
             if (target === 'manual') return;
             let N = 0;
             if (target === 'best') {
@@ -473,6 +495,6 @@
 
     const api = { SEGMENTS, FUELS, DEFAULT_HEADERS, parseDate, formatDate, normSegment, parseCSV, rowsToRecords, tableToRows, missingHeaders,
         sortedYears, inflationFactors, loanSchedule, costTable, COST_TYPES, costType, personnelTable, missingFields, isVehicleComplete, simulate, fleetCurve, dailyPeaks,
-        freeAtOf, buildReport, rentDays };
+        freeAtOf, buildReport, rentDays, adjustFiles };
     if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;
 })(typeof window !== 'undefined' ? window : globalThis);

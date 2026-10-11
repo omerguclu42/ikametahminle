@@ -14,7 +14,7 @@
     const cfg = root.FIREBASE_CONFIG, fb = root.firebase;
     const ROOT = 'ikame', CHUNK = 1000;
     const enabled = !!(cfg && fb && fb.initializeApp);
-    let auth = null, db = null, vm = null, user = null, ready = false;
+    let auth = null, db = null, vm = null, user = null, ready = false, persistReady = Promise.resolve();
     let refs = [];
     let last, seen, remoteImages, lastHistRaw, lastHistLen;
 
@@ -186,16 +186,21 @@
         if (!enabled) return false;
         fb.initializeApp(cfg);
         auth = fb.auth(); db = fb.database();
+        // Oturum yalnızca bu sekmede geçerli: sekme / tarayıcı kapanınca tekrar giriş gerekir (yenilemede korunur)
+        persistReady = Promise.resolve().then(() => auth.setPersistence(fb.auth.Auth.Persistence.SESSION)).catch(() => { /* yoksay */ });
         db.ref('.info/connected').on('value', s => { vm.sync.online = !!s.val(); });
         auth.onAuthStateChanged(u => {
             user = u;
             if (u) { vm.auth.user = { email: u.email }; vm.auth.state = 'in'; vm.auth.error = ''; startSync(); }
-            else { ready = false; detach(); vm.auth.user = null; vm.auth.state = 'out'; vm.sync.loaded = false; }
+            else { // oturum yok: bu bilgisayarda kalmış yerel kopya da silinir
+                ready = false; detach(); vm.auth.user = null; vm.auth.state = 'out'; vm.sync.loaded = false;
+                if (vm.resetLocal) vm.resetLocal();
+            }
         });
         return true;
     }
     async function signIn(email, password) {
-        try { await auth.signInWithEmailAndPassword(email, password); return null; }
+        try { await persistReady; await auth.signInWithEmailAndPassword(email, password); return null; }
         catch (e) { return friendly(e); }
     }
     async function signOut() { await hardSignOut(); }

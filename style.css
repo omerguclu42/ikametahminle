@@ -261,3 +261,6 @@ tr.cursor-pointer:hover { background: #fff4ec; }
 .pers-lock { font-size: .78rem; border: 1px solid #dee2e6; }
 .pers-lock.locked { background: #343a40; color: #fff; border-color: #343a40; }
 .pers-lock.open { background: #ebfbee; color: #2b8a3e; border-color: #8ce99a; }
+.growth-note { background: #f3f8ff; border: 1px dashed #74c0fc; border-radius: 8px; padding: 8px 12px; font-size: .85rem; }
+.sc-owner { font-size: .72rem; color: #495057; margin-bottom: 6px; }
+.apply-all { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 10px 12px; }
