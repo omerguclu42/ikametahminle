@@ -12,12 +12,17 @@
 <body>
     <div id="app" v-cloak :class="{present: present}">
         <!-- ================= Giriş ekranı ================= -->
-        <div class="login-screen" v-if="!authed">
+        <!-- Arka plan görselini kaldırmak için aşağıdaki "with-bg" sınıfını silmek yeterli -->
+        <div class="login-screen with-bg" v-if="!authed">
+            <div class="login-hero">
+                <div class="lh-title">İkame Filo Tahminleme</div>
+                <div class="lh-sub">Doğru filo büyüklüğü, doğru maliyet, veriye dayalı karar.</div>
+            </div>
             <div class="login-card">
                 <img src="images/eurocross-logo.png" alt="Eurocross Turkey" class="login-logo">
                 <h1 class="login-title">İkame Tahminleme Projesi</h1>
                 <div v-if="auth.state === 'loading' || (auth.state === 'in' && !sync.loaded && sync.status !== 'error')" class="text-center text-muted py-4">
-                    <div class="spinner-border text-warning mb-2"></div>
+                    <div class="load-bar mb-3"><span></span></div>
                     <div>{{ auth.state === 'in' ? 'Veriler yükleniyor…' : 'Yükleniyor…' }}</div>
                 </div>
                 <div v-else-if="auth.state === 'in'" class="text-center py-3">
