@@ -260,7 +260,7 @@ const app = createApp({
 
             // Raporlama
             reportSeg: null,
-            sensP: 10, sensData: null, sensBusy: false,
+            sensP: 10, sensData: null, sensBusy: false, margData: {}, margBusy: false,
             ds: { type: 'dosya', status: 'all', search: '', page: 1, size: 50 }
         };
     },
@@ -507,7 +507,7 @@ const app = createApp({
             const A = this.monthDetail;
             const ay = { cols: [col('Ay', 1), col('Talep'), col('Karşılanan'), col('Karşılama'), col('Üst/Alt Seg.'), col('Karşılanamayan'), col('Dolu Gün'), col('Doluluk'), col('Dosya Geliri'), col('Gider (Araç + Personel)'), col('Net'), col('Kümülatif Net')],
                 rows: A.rows.map(r => ({ key: r.mi, cells: [T(r.mi, MONTHS[r.mi], 'text-start fw-bold'), I(r.total), I(r.handled), T(r.ratio, pc(r.ratio), 'fw-bold ' + this.ratioClass(r.ratio)), I(r.cross), T(r.missed, f(r.missed), r.missed ? 'text-danger' : ''), I(r.work), P(r.util), M(r.revenue), M(r.cost), N(r.net), T(r.cum, m(r.cum), 'fw-bold ' + nc(r.cum))] })),
-                foot: A.rows.length ? [T('', 'Toplam', 'text-start'), T(0, f(A.tot.total)), T(0, f(A.tot.handled)), T(0, pc(A.tot.total ? A.tot.handled / A.tot.total * 100 : 0)), T(0, f(A.tot.cross)), T(0, f(A.tot.missed)), T(0, f(A.tot.work)), T(0, ''), T(0, m(A.tot.revenue)), T(0, m(A.tot.cost)), T(0, m(A.tot.net), nc(A.tot.net)), T(0, '')] : null };
+                foot: A.rows.length ? [T('', 'Toplam', 'text-start'), T(0, f(A.tot.total)), T(0, f(A.tot.handled)), T(0, pc(A.tot.total ? A.tot.handled / A.tot.total * 100 : 0)), T(0, f(A.tot.cross)), T(0, f(A.tot.missed)), T(0, f(A.tot.work)), T(0, pc(A.tot.cap ? A.tot.work / A.tot.cap * 100 : 0) + ' ort.'), T(0, m(A.tot.revenue)), T(0, m(A.tot.cost)), T(0, m(A.tot.net), nc(A.tot.net)), T(0, m(A.tot.net), nc(A.tot.net))] : null };
             return { yillik, segment, model, giderItems, giderCats, plaka, ay };
         },
         /* Ay bazlı performans (teslim ayına göre) */
@@ -515,7 +515,7 @@ const app = createApp({
             const R = this.report, F = this.filters, V = this.view, st = R.sim.segStats, y0 = R.dataYear || 2026;
             const yOk = y => F.year === 'all' || String(y) === String(F.year), yrs = R.years.filter(yOk), nY = yrs.length || 1;
             const segOk = p => (F.seg === 'all' || p.seg === F.seg) && (F.vid === 'all' || p.vid === F.vid);
-            const rows = []; let cum = 0; const tot = { total: 0, handled: 0, cross: 0, missed: 0, work: 0, revenue: 0, cost: 0, net: 0 };
+            const rows = []; let cum = 0; const tot = { total: 0, handled: 0, cross: 0, missed: 0, work: 0, cap: 0, revenue: 0, cost: 0, net: 0 };
             for (let mi = 0; mi < 12; mi++) {
                 if (V.mi !== null && V.mi !== mi) continue;
                 const dim = new Date(y0, mi + 1, 0).getDate();
@@ -532,7 +532,7 @@ const app = createApp({
                 });
                 if (!d.total && !work) continue;
                 const total = d.total * nY, handled = d.handled * nY, net = revenue - cost; cum += net;
-                const r = { mi, total, handled, cross: d.cross * nY, missed: total - handled, ratio: total ? handled / total * 100 : 0, work, util: cap ? work / cap * 100 : 0, revenue, cost, net, cum };
+                const r = { mi, total, handled, cross: d.cross * nY, missed: total - handled, ratio: total ? handled / total * 100 : 0, work, cap, util: cap ? work / cap * 100 : 0, revenue, cost, net, cum };
                 rows.push(r); Object.keys(tot).forEach(k => { tot[k] += r[k]; });
             }
             return { rows, tot };
@@ -708,7 +708,7 @@ const app = createApp({
             return V.modelRows.map(r => {
                 const w = r.work, custDay = w ? r.revenue / w : 0, costDay = w ? (r.cost + r.pers - r.sale) / w : 0;
                 const sv = yrs.map(y => Number((ts[r.v.segment] || {})[y]) || 0).filter(x => x > 0), supDay = sv.length ? sv.reduce((a, b) => a + b, 0) / sv.length : 0;
-                return { v: r.v, cnt: r.cnt, util: r.util, custDay, costDay, supDay, own: custDay - costDay, adv: supDay ? supDay - costDay : null, marg: this.report.marginal[r.v.id] };
+                return { v: r.v, cnt: r.cnt, util: r.util, custDay, costDay, supDay, own: custDay - costDay, adv: supDay ? supDay - costDay : null, marg: this.margOf(r.v) === null ? undefined : this.margOf(r.v) };
             });
         },
         /* Raporlama: her analiz = başlık + bulgu + solda grafik, sağda aynı veri tablo olarak */
@@ -799,7 +799,7 @@ const app = createApp({
             if (MD.length) {
                 const bestM = MD.reduce((a, r) => (r.own > a.own ? r : a), MD[0]);
                 const mcols = ['Model', 'Adet', 'Doluluk', 'Gelir / gün', 'Maliyet / gün', 'Günlük kâr']; if (sup) mcols.push('Tedarikçi / gün', 'Avantaj / gün'); mcols.push('+1 araç');
-                B.splice(5, 0, { id: 'chModel', title: 'Model Karar Tablosu', sub: 'Her modelin çalışılan gün başına müşteri geliri ve toplam maliyeti (alış + faiz + işletme + personel payı − satış)' + (sup ? '; tedarikçi günlük tutarıyla karşılaştırma' : '') + '. "+1 araç": bu modelden bir araç daha eklenirse şirket netine etkisi.',
+                B.splice(5, 0, { id: 'chModel', title: 'Model Karar Tablosu', sub: 'Her modelin çalışılan gün başına müşteri geliri ve toplam maliyeti (alış + faiz + işletme + personel payı − satış)' + (sup ? '; tedarikçi günlük tutarıyla karşılaştırma' : '') + '. "+1 araç": bu modelden bir araç daha eklenirse Net Kâr / Zarar üzerindeki etkisi.',
                     insight: `Gün başı en kârlı model ${bestM.v.markaModel}: günde ${money(bestM.own)} kâr (gelir ${money(bestM.custDay)}, maliyet ${money(bestM.costDay)}).`,
                     cols: mcols, rows: MD.map(r => { const row = [c(r.v.markaModel + ' (' + r.v.segment + ')', 'text-start fw-bold'), c(f(r.cnt)), c(pc(r.util)), c(money(r.custDay), 'text-success'), c(money(r.costDay), 'text-danger'), c(money(r.own), nc(r.own))]; if (sup) row.push(c(r.supDay ? money(r.supDay) : '-'), c(r.adv === null ? '-' : money(r.adv), r.adv === null ? '' : nc(r.adv))); row.push(c(r.marg === undefined ? '-' : sm(r.marg), r.marg === undefined ? '' : nc(r.marg))); return row; }) });
             }
@@ -900,6 +900,7 @@ const app = createApp({
         window.addEventListener('keydown', e => { if (e.key === 'Escape' && this.present) this.present = false; });
         this.$watch(() => [this.activeTab, this.report, this.sensP, this.authed], () => this.scheduleSens());
         this.$watch(() => this.sensData, () => this.scheduleCharts());
+        this.$watch(() => [this.activeTab, this.report, this.authed], () => this.scheduleMarginal(), { immediate: true });
         this.$watch(() => this.present, () => this.$nextTick(() => this.scheduleCharts()));
         this.$watch(() => this.histSize, () => { this.histPage = 1; });
         this.$watch(() => this.histPages, n => { if (this.histPage > n) this.histPage = n; });
@@ -935,12 +936,30 @@ const app = createApp({
             const x = Math.max(8, Math.min(window.innerWidth - W - 8, r.left + r.width / 2 - W / 2)), up = r.bottom + 220 > window.innerHeight;
             this.tip = { show: true, text, x, y: up ? r.top - 8 : r.bottom + 8, up };
         },
+        margOf(v) { return this.margBusy || !(v.id in this.margData) ? null : this.margData[v.id]; },
         marginalTip(v) {
-            const m = this.report.marginal[v.id] || 0, n = v.count + 1;
-            return `${v.markaModel} için ${n}. aracı eklersen şirket neti (tüm yıllar) ${this.money(m)} değişir.\n` +
-                `Hesap: yeni araç segmentte gider sırasına girer; dosyalar yeniden dağıtılır. Aracın getirdiği dosya geliri − aracın tüm giderleri (alış, faiz, işletme, satış geliri düşülerek)` +
-                `${this.settings.personelKilit ? '' : ' − personel payı (kilit açık)'}${this.hasSupplier ? ' − bu dosyaları tedarikçiye verseydik kalacak marj' : ''}.\n` +
-                `Üst/alt segment etkisi dahil değildir. Pozitifse araç eklemek kârlı, negatifse zarar.`;
+            const m = this.margOf(v), n = v.count + 1;
+            if (m === null) return 'Hesaplanıyor…';
+            return `${v.markaModel} için ${n}. aracı eklersen Net Kâr / Zarar kartı (tüm yıllar) ${m >= 0 ? '+' : ''}${this.money(m)} değişir.\n` +
+                `Hesap: filo bir araç fazlasıyla baştan simüle edilir; dosyalar yeniden dağıtılır (üst/alt segment seçenekleri dahil) ve iki sonucun Net Kâr / Zarar farkı alınır.\n` +
+                `Yeni aracın getirdiği ek dosya geliri − aracın tüm giderleri (alış, faiz, işletme; satış geliri düşülür)` +
+                `${this.settings.personelKilit ? '' : ' − personel sayısı artarsa ek personel gideri (kilit açık)'}.\nTedarikçi marjı hesaba katılmaz.`;
+        },
+        /* +1 araç etkisi: her model için filo bir araç fazlasıyla tam simüle edilir (arka planda) */
+        scheduleMarginal() {
+            clearTimeout(this._margT);
+            if (!this.authed || !['tahminleme', 'raporlama'].includes(this.activeTab)) return;
+            this.margBusy = true;
+            this._margT = setTimeout(() => {
+                const base = this.netOf(this.report), counts = {}, out = {};
+                this.vehicles.forEach(v => { counts[v.id] = v.count || 0; });
+                const sim = { ...this.settings.sim, target: 'manual' };
+                this.vehicles.filter(v => this.isComplete(v)).forEach(v => {
+                    const R = this.reportFor(sim, { ...counts, [v.id]: counts[v.id] + 1 });
+                    out[v.id] = this.netOf(R) - base;
+                });
+                this.margData = out; this.margBusy = false;
+            }, 450);
         },
         hideTip() { this.tip.show = false; },
         /* Personel sayısı kilidi: açıkken önerilen sayıdan otomatik; elle değiştirince kilitlenir */

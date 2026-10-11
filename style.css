@@ -319,3 +319,4 @@ tr.cursor-pointer:hover { background: #fff4ec; }
 }
 .sc-short { border-radius: 20px; }
 .an-table td { font-size: .82rem; } .an-table thead th { font-size: .72rem; }
+.vi-effect.wait { background: #f8f9fa; color: #868e96; border: 1px solid #e9ecef; }

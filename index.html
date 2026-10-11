@@ -522,11 +522,14 @@
                             <div class="d-flex align-items-center justify-content-center gap-2">
                                 <input type="number" min="0" class="form-control form-control-sm text-center" style="width:90px" :value="v.count" :disabled="!isComplete(v)" @input="setCount(v, $event.target.value)"> <span class="small">adet</span>
                             </div>
-                            <div class="vi-effect mt-2" v-if="isComplete(v) && report.marginal[v.id] !== undefined" :class="report.marginal[v.id] >= 0 ? 'pos' : 'neg'"
+                            <div class="vi-effect mt-2" v-if="isComplete(v)" :class="margOf(v) === null ? 'wait' : (margOf(v) >= 0 ? 'pos' : 'neg')"
                                 @mouseenter="showTipText($event, marginalTip(v))" @mouseleave="hideTip">
-                                <div class="small">{{ v.count + 1 }}. araç eklenirse</div>
-                                <b><i class="bi" :class="report.marginal[v.id] >= 0 ? 'bi-arrow-up-right' : 'bi-arrow-down-right'"></i> {{ report.marginal[v.id] >= 0 ? '+' : '' }}{{ shortMoney(report.marginal[v.id]) }}</b>
-                                <div class="small">{{ report.marginal[v.id] >= 0 ? 'kârlılık artar' : 'zarar artar' }}</div>
+                                <div class="small">{{ v.count + 1 }}. araç eklenirse Net Kâr / Zarar</div>
+                                <template v-if="margOf(v) !== null">
+                                    <b><i class="bi" :class="margOf(v) >= 0 ? 'bi-arrow-up-right' : 'bi-arrow-down-right'"></i> {{ margOf(v) >= 0 ? '+' : '' }}{{ shortMoney(margOf(v)) }}</b>
+                                    <div class="small">{{ margOf(v) >= 0 ? 'kâr artar' : 'kâr azalır' }}</div>
+                                </template>
+                                <div v-else class="small py-1"><span class="spinner-border spinner-border-sm me-1"></span>hesaplanıyor…</div>
                             </div>
                         </div>
                     </div>
