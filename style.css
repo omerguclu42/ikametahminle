@@ -347,3 +347,8 @@ tr.cursor-pointer:hover { background: #fff4ec; }
 .lh-sub { font-size: clamp(.9rem, 1.2vw, 1.1rem); opacity: .92; margin-top: 12px; }
 @keyframes cardIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 @media (max-width: 900px) { .login-screen.with-bg { justify-content: center; } .login-screen.with-bg .login-hero { display: none; } }
+/* Raporlama tabloları: başlıklar ve veriler ortalı */
+.an-table th, .an-table td, .an-table .text-start, .an-table .text-end,
+.ds-table th, .ds-table td, .ds-table .text-end { text-align: center !important; vertical-align: middle; }
+.an-table th, .an-table td { padding-left: 6px; padding-right: 6px; }
+.an-table thead th { white-space: normal; line-height: 1.2; }
