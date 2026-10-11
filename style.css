@@ -264,3 +264,58 @@ tr.cursor-pointer:hover { background: #fff4ec; }
 .growth-note { background: #f3f8ff; border: 1px dashed #74c0fc; border-radius: 8px; padding: 8px 12px; font-size: .85rem; }
 .sc-owner { font-size: .72rem; color: #495057; margin-bottom: 6px; }
 .apply-all { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 10px 12px; }
+.vinfo { border-top: 1px solid #f1f3f5; padding-top: 6px; }
+.vi-row { display: flex; justify-content: space-between; gap: 8px; font-size: .8rem; color: #6c757d; padding: 2px 0; border-bottom: 1px dashed #f1f3f5; }
+.vi-row b { white-space: nowrap; }
+.vi-effect { text-align: center; border-radius: 8px; padding: 6px; cursor: help; line-height: 1.25; }
+.vi-effect b { font-size: 1.05rem; }
+.vi-effect.pos { background: #ebfbee; color: #2b8a3e; border: 1px solid #b2f2bb; }
+.vi-effect.neg { background: #fff5f5; color: #c92a2a; border: 1px solid #ffc9c9; }
+.sort-table th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.sort-table th.sortable:hover { color: #ff6600; }
+.sort-table th.sorted { color: #ff6600; }
+.sort-ic { font-size: .7rem; opacity: .45; }
+.sort-table th.sorted .sort-ic { opacity: 1; }
+.sort-table td { white-space: nowrap; }
+/* Koyu sarı uyarı rengi ve artış / azalış okları */
+.text-warn { color: #c99700 !important; }
+.tab-state.todo::after { background: #f2b705; }
+.kpi-v.text-success::before, .exec-num b.text-success::before { content: '▲ '; font-size: .65em; vertical-align: middle; }
+.kpi-v.text-danger::before, .exec-num b.text-danger::before { content: '▼ '; font-size: .65em; vertical-align: middle; }
+/* Sunum modu */
+#app.present .main-content { font-size: 1.05rem; }
+#app.present .page-header { padding: 10px 32px; }
+#app.present .p-4 { padding: 24px 40px !important; }
+#app.present .kpi-v { font-size: 1.6rem; }
+#app.present .kpi-grid-7 .kpi-v { font-size: 1.35rem; }
+#app.present .kpi-l { font-size: .82rem; }
+#app.present .an-title { font-size: 1.3rem; }
+#app.present .an-chart, #app.present .an-table { height: 400px; }
+.present-exit { position: fixed; right: 20px; bottom: 20px; z-index: 3100; border: 0; border-radius: 30px; background: #343a40; color: #fff; padding: 8px 18px; font-size: .85rem; box-shadow: 0 6px 20px rgba(0,0,0,.25); opacity: .85; }
+.present-exit:hover { opacity: 1; }
+/* Çalışma rehberi */
+.guide-nav { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.08); overflow: hidden; position: sticky; top: 90px; }
+.guide-nav a { display: flex; align-items: center; padding: 11px 14px; color: #495057; text-decoration: none; border-bottom: 1px solid #f1f3f5; font-size: .92rem; }
+.guide-nav a:hover { background: #fff8f2; color: #ff6600; }
+.guide-nav a.active { background: #ff6600; color: #fff; font-weight: 600; }
+.guide-sec { margin-top: 16px; }
+.guide-sec h6 { color: #343a40; font-weight: 700; border-left: 4px solid #ff6600; padding-left: 10px; }
+.guide-sec li { margin-bottom: 6px; line-height: 1.5; }
+/* PDF / yazdırma */
+@page { size: A4 landscape; margin: 10mm; }
+@media print {
+    body, .main-content { background: #fff !important; }
+    #app { display: block !important; height: auto !important; }
+    .sidebar, .no-print, .app-toast, .kpi-tip, .kpi-info, .present-exit, .sync-error-bar, .scenario-row .sc-actions, .vehicle-strip input, .vehicle-strip .btn, .form-range, .btn, .pagination { display: none !important; }
+    .main-content { overflow: visible !important; display: block !important; }
+    .page-header { position: static !important; box-shadow: none; }
+    .p-4 { padding: 0 !important; }
+    .kpi, .analysis-card, .card, .chart-card, .vcard, tr { break-inside: avoid; page-break-inside: avoid; }
+    .analysis-card { box-shadow: none; border: 1px solid #dee2e6; }
+    .an-table { height: auto !important; overflow: visible !important; }
+    .vehicle-strip { flex-wrap: wrap; overflow: visible; }
+    .table-responsive { overflow: visible !important; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+.sc-short { border-radius: 20px; }
+.an-table td { font-size: .82rem; } .an-table thead th { font-size: .72rem; }

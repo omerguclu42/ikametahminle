@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="app" v-cloak>
+    <div id="app" v-cloak :class="{present: present}">
         <!-- ================= Giriş ekranı ================= -->
         <div class="login-screen" v-if="!authed">
             <div class="login-card">
@@ -47,7 +47,7 @@
         </div>
 
         <!-- ================= Menü ================= -->
-        <div class="sidebar d-flex flex-column p-3" v-show="authed">
+        <div class="sidebar d-flex flex-column p-3" v-show="authed && !present">
             <div class="brand mb-2 text-center">
                 <img src="images/eurocross-logo-white.png" alt="Eurocross Turkey" class="side-logo">
                 <div class="app-title">İkame Tahminleme Projesi</div>
@@ -70,6 +70,11 @@
                         <i class="bi bi-bar-chart-line me-2"></i> Raporlama
                     </a>
                 </li>
+                <li class="mt-2">
+                    <a href="#" class="nav-link" :class="{active: activeTab === 'rehber'}" @click.prevent="activeTab = 'rehber'">
+                        <i class="bi bi-book me-2"></i> Çalışma Rehberi
+                    </a>
+                </li>
             </ul>
             <div class="sidebar-user" v-if="auth.user">
                 <div class="small text-truncate" :title="auth.user.email"><i class="bi bi-person-circle me-1"></i>{{ auth.user.email }}</div>
@@ -85,6 +90,8 @@
                     <div class="page-desc">{{ pageMeta[1] }}</div>
                 </div>
                 <div class="page-user">
+                    <button class="btn btn-sm btn-outline-secondary no-print" v-if="activeTab === 'tahminleme' || activeTab === 'raporlama'" @click="savePdf"><i class="bi bi-file-earmark-pdf"></i> PDF olarak kaydet</button>
+                    <button class="btn btn-sm no-print" :class="present ? 'btn-dark' : 'btn-outline-dark'" @click="present = !present"><i class="bi" :class="present ? 'bi-fullscreen-exit' : 'bi-easel'"></i> {{ present ? 'Sunum modundan çık' : 'Sunum Modu' }}</button>
                     <span class="sync-badge" :class="syncClass" title="Verilerin buluta kaydedilme durumu"><i class="bi bi-circle-fill me-1"></i>{{ syncLabel }}</span>
                     <span class="user-chip" v-if="auth.user"><i class="bi bi-person-circle me-1"></i>{{ auth.user.email }}</span>
                 </div>
@@ -499,22 +506,28 @@
                 <div class="vehicle-strip mb-4" v-if="vehicles.length">
                     <div class="card vcard shadow-sm border-0" v-for="v in stripVehicles" :key="v.id" :class="{'vcard-off': !isComplete(v)}">
                         <img :src="v.imageBase64 || placeholder" class="p-2" style="height:110px;object-fit:contain;">
-                        <div class="card-body pt-0">
+                        <div class="card-body pt-0 d-flex flex-column">
                             <div class="fw-bold text-orange">{{ v.markaModel }}</div>
-                            <span class="badge bg-secondary me-1">{{ v.segment }}</span><span class="badge bg-info text-dark me-1">{{ v.yakitTuru }}</span>
-                            <span class="badge bg-light text-dark border" v-if="rankOf[v.id]" title="Segment içinde dosya verilme sırası (en düşük giderli önce)">Öncelik {{ rankOf[v.id] }}</span>
-                            <div class="incomplete-badge mt-1" v-if="!isComplete(v)"><i class="bi bi-exclamation-triangle-fill"></i> Eksik bilgi, hesaba katılmıyor</div>
-                            <template v-else>
-                                <div class="small text-muted mt-1">Araç başı gider ({{ costOf(v.id).opt }} yıl): <b>{{ money(vehicleTotal(v)) }}</b></div>
-                                <div class="small text-muted">Satış: <b>{{ money(costOf(v.id).sale) }}</b> · Yıllık ort. net: <b>{{ money(costOf(v.id).annualNet) }}</b></div>
-                            </template>
-                            <button class="btn btn-sm btn-outline-orange my-2" @click="showCostDetails(v)"><i class="bi bi-search"></i> İncele</button>
-                            <input type="range" class="form-range" min="0" max="300" :value="isAuto ? effCount(v) : v.count" :disabled="isAuto || !isComplete(v)" @input="setCount(v, $event.target.value)">
-                            <div class="d-flex align-items-center gap-2">
-                                <input type="number" min="0" class="form-control form-control-sm text-center" style="width:80px" :value="isAuto ? effCount(v) : v.count" :disabled="isAuto || !isComplete(v)" @input="setCount(v, $event.target.value)"> <span class="small">adet</span>
-                                <span class="badge bg-orange" v-if="isAuto">Otomatik</span>
+                            <div class="mb-2"><span class="badge bg-secondary me-1">{{ v.segment }}</span><span class="badge bg-info text-dark me-1">{{ v.yakitTuru }}</span>
+                                <span class="badge bg-light text-dark border" v-if="rankOf[v.id]" title="Segment içinde dosya verilme sırası (en düşük giderli önce)">Öncelik {{ rankOf[v.id] }}</span></div>
+                            <div class="incomplete-badge" v-if="!isComplete(v)"><i class="bi bi-exclamation-triangle-fill"></i> Eksik bilgi, hesaba katılmıyor</div>
+                            <div class="vinfo" v-else>
+                                <div class="vi-row"><span>Araç başı gider ({{ costOf(v.id).opt }} yıl)</span><b class="text-danger">{{ money(vehicleTotal(v)) }}</b></div>
+                                <div class="vi-row"><span>Satış tutarı</span><b class="text-success">{{ money(costOf(v.id).sale) }}</b></div>
+                                <div class="vi-row"><span>Yıllık ort. net maliyet</span><b class="text-danger">{{ money(costOf(v.id).annualNet) }}</b></div>
+                                <div class="vi-row"><span>Toplam gider ({{ effCount(v) }} adet)</span><b class="text-danger">{{ money(effCount(v) * vehicleTotal(v)) }}</b></div>
                             </div>
-                            <div class="mt-2 small cost-line"><b class="text-orange">Gider Maliyeti:</b> {{ effCount(v) }} × {{ money(vehicleTotal(v)) }} = <b>{{ money(effCount(v) * vehicleTotal(v)) }}</b></div>
+                            <div class="text-center my-2"><button class="btn btn-sm btn-outline-orange px-4" @click="showCostDetails(v)"><i class="bi bi-search"></i> İncele</button></div>
+                            <input type="range" class="form-range" min="0" max="300" :value="v.count" :disabled="!isComplete(v)" @input="setCount(v, $event.target.value)">
+                            <div class="d-flex align-items-center justify-content-center gap-2">
+                                <input type="number" min="0" class="form-control form-control-sm text-center" style="width:90px" :value="v.count" :disabled="!isComplete(v)" @input="setCount(v, $event.target.value)"> <span class="small">adet</span>
+                            </div>
+                            <div class="vi-effect mt-2" v-if="isComplete(v) && report.marginal[v.id] !== undefined" :class="report.marginal[v.id] >= 0 ? 'pos' : 'neg'"
+                                @mouseenter="showTipText($event, marginalTip(v))" @mouseleave="hideTip">
+                                <div class="small">{{ v.count + 1 }}. araç eklenirse</div>
+                                <b><i class="bi" :class="report.marginal[v.id] >= 0 ? 'bi-arrow-up-right' : 'bi-arrow-down-right'"></i> {{ report.marginal[v.id] >= 0 ? '+' : '' }}{{ shortMoney(report.marginal[v.id]) }}</b>
+                                <div class="small">{{ report.marginal[v.id] >= 0 ? 'kârlılık artar' : 'zarar artar' }}</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -549,8 +562,20 @@
                     <div class="row g-3 mb-3">
                         <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Filo Doluluk Oranı<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Filo Doluluk Oranı')" @mouseleave="hideTip" @click="showTip($event, 'Filo Doluluk Oranı')"></i></div><div class="kpi-v text-orange">{{ pct(view.util) }}</div><div class="kpi-s">{{ formatCurrency(view.total.work) }} çalışan / {{ formatCurrency(view.total.idle) }} boşta gün</div></div></div>
                         <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Karşılanan Dosya<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Karşılanan Dosya')" @mouseleave="hideTip" @click="showTip($event, 'Karşılanan Dosya')"></i></div><div class="kpi-v">{{ formatCurrency(view.files.handled) }} <small class="text-muted fs-6">/ {{ formatCurrency(view.files.total) }}</small></div><div class="kpi-s">Karşılanamayan: <b class="text-danger">{{ formatCurrency(view.files.missed) }}</b> dosya</div></div></div>
-                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Karşılanan Dosya Oranı<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Karşılanan Dosya Oranı')" @mouseleave="hideTip" @click="showTip($event, 'Karşılanan Dosya Oranı')"></i></div><div class="kpi-v" :class="ratioClass(view.files.ratio)">{{ pct(view.files.ratio) }}</div><div class="kpi-s"><span class="text-danger">●</span> %50 altı <span class="text-orange">●</span> %50-75 <span class="text-success">●</span> %75 üstü</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Karşılanan Dosya Oranı<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Karşılanan Dosya Oranı')" @mouseleave="hideTip" @click="showTip($event, 'Karşılanan Dosya Oranı')"></i></div><div class="kpi-v" :class="ratioClass(view.files.ratio)">{{ pct(view.files.ratio) }}</div><div class="kpi-s"><span class="text-danger">●</span> %50 altı <span class="text-warn">●</span> %50-75 <span class="text-success">●</span> %75 üstü</div></div></div>
                         <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Araç Sayısı<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Araç Sayısı')" @mouseleave="hideTip" @click="showTip($event, 'Araç Sayısı')"></i></div><div class="kpi-v">{{ formatCurrency(view.plateTotal) }}</div><div class="kpi-s">Hiç dosya almayan: <b :class="view.idlePlates ? 'text-danger' : ''">{{ view.idlePlates }}</b> araç</div></div></div>
+                    </div>
+                    <div class="kpi-title">Operasyon Yükü</div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">En Yoğun Gün<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'En Yoğun Gün')" @mouseleave="hideTip" @click="showTip($event, 'En Yoğun Gün')"></i></div><div class="kpi-v">{{ formatCurrency(opsLoad.max.total) }} <small class="text-muted fs-6">işlem</small></div>
+                            <div class="kpi-s">{{ opsLoad.max.date }} · {{ opsLoad.max.del }} teslimat / {{ opsLoad.max.ret }} iade<br>En çok teslimat {{ opsLoad.maxDel }} · en çok iade {{ opsLoad.maxRet }}</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Ortalama Gün<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Ortalama Gün')" @mouseleave="hideTip" @click="showTip($event, 'Ortalama Gün')"></i></div><div class="kpi-v">{{ fmt1(opsLoad.avgTotal) }} <small class="text-muted fs-6">işlem</small></div>
+                            <div class="kpi-s">{{ fmt1(opsLoad.avgDel) }} teslimat / {{ fmt1(opsLoad.avgRet) }} iade</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">En Sakin Gün<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'En Sakin Gün')" @mouseleave="hideTip" @click="showTip($event, 'En Sakin Gün')"></i></div><div class="kpi-v">{{ formatCurrency(opsLoad.min.total) }} <small class="text-muted fs-6">işlem</small></div>
+                            <div class="kpi-s">{{ opsLoad.min.date }} · {{ opsLoad.min.del }} teslimat / {{ opsLoad.min.ret }} iade</div></div></div>
+                        <div class="col-6 col-lg-3"><div class="kpi kpi-hl"><div class="kpi-l">Personel Başına Günlük İşlem<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Personel Başına Günlük İşlem')" @mouseleave="hideTip" @click="showTip($event, 'Personel Başına Günlük İşlem')"></i></div><div class="kpi-v">{{ opsLoad.active ? fmt1(opsLoad.perAvg) : '-' }} <small class="text-muted fs-6">işlem</small></div>
+                            <div class="kpi-s" v-if="opsLoad.active">En yoğun günde {{ fmt1(opsLoad.perMax) }} · günde aktif {{ fmt1(opsLoad.active) }} personel ({{ opsLoad.pers }} kişi × 6/7)</div>
+                            <div class="kpi-s text-danger" v-else>Personel sayısı girilmemiş</div></div></div>
                     </div>
                     <div class="kpi-title">Tedarikçi Analizi <span class="badge bg-secondary" v-if="!hasSupplier">Tedarikçi tutarı girilmedi</span></div>
                     <div class="row row-cols-2 row-cols-lg-5 g-3 mb-3" v-if="hasSupplier">
@@ -614,73 +639,65 @@
 
                     <!-- Detay sekmeleri -->
                     <ul class="nav nav-tabs mb-3">
-                        <li class="nav-item" v-for="t in [['yillik','Yıllık Özet'],['segment','Segment'],['model','Araç Modeli'],['gider','Gider Dağılımı'],['plaka','Plaka Detayı']]" :key="t[0]">
+                        <li class="nav-item" v-for="t in [['yillik','Yıllık Özet'],['segment','Segment'],['model','Araç Modeli'],['gider','Gider Dağılımı'],['plaka','Plaka Detayı'],['ay','Ay Detayı']]" :key="t[0]">
                             <a href="#" class="nav-link" :class="{active: detailTab === t[0]}" @click.prevent="detailTab = t[0]">{{ t[1] }}</a></li>
                     </ul>
-
-                    <div class="card shadow-sm border-0"><div class="table-responsive">
-                        <!-- Yıllık -->
-                        <table class="table table-hover align-middle mb-0 text-end" v-if="detailTab === 'yillik'">
-                            <thead class="table-light"><tr><th class="text-start">Yıl</th><th>Aktif Araç</th><th>Çalışılan Gün</th><th>Boşta Gün</th><th>Doluluk</th><th>Dosya Geliri</th><th>Araç Satışı</th><th>İşletme Gideri</th><th>Alış Gideri</th><th>Faiz Gideri</th><th>Personel Gideri</th><th>Filo Neti</th><th>Kümülatif Net</th><th v-if="hasSupplier">Tedarikçi Marjı</th><th v-if="hasSupplier">Şirket Neti</th></tr></thead>
-                            <tbody>
-                                <tr v-for="r in view.yearRows" :key="r.year"><td class="text-start fw-bold">{{ r.year }}</td><td>{{ r.plates }}</td><td>{{ formatCurrency(r.work) }}</td><td>{{ formatCurrency(r.idle) }}</td><td>{{ pct(r.util) }}</td>
-                                    <td>{{ money(r.revenue) }}</td><td>{{ money(r.sale) }}</td><td>{{ money(r.op) }}</td><td>{{ money(r.buy) }}</td><td>{{ money(r.int) }}</td><td>{{ money(r.pers) }}</td><td :class="netClass(r.net)">{{ money(r.net) }}</td><td class="fw-bold" :class="netClass(r.cum)">{{ money(r.cum) }}</td>
-                                    <td v-if="hasSupplier" :class="netClass(r.sup)">{{ money(r.sup) }}</td><td v-if="hasSupplier" class="fw-bold" :class="netClass(r.company)">{{ money(r.company) }}</td></tr>
-                            </tbody>
-                        </table>
-                        <!-- Segment -->
-                        <table class="table table-hover align-middle mb-0 text-end" v-if="detailTab === 'segment'">
-                            <thead class="table-light"><tr><th class="text-start">Segment</th><th>Araç</th><th>Pik İhtiyaç</th><th>Dosya</th><th>Karşılanan</th><th>Üst/Alt Seg.</th><th>Karşılanamayan</th><th>Karşılama Oranı</th><th>Doluluk</th><th>Gelir</th><th>Araç Gideri</th><th>Personel Gideri</th><th>Net</th></tr></thead>
-                            <tbody>
-                                <tr v-for="r in view.segmentRows" :key="r.seg"><td class="text-start fw-bold">{{ r.seg }}</td><td>{{ r.cnt }}</td><td>{{ r.peak }}</td><td>{{ formatCurrency(r.total) }}</td><td>{{ formatCurrency(r.handled) }}</td><td>{{ formatCurrency(r.cross) }}</td>
-                                    <td :class="{'text-danger': r.missed}">{{ formatCurrency(r.missed) }}</td><td class="fw-bold" :class="ratioClass(r.ratio)">{{ pct(r.ratio) }}</td><td>{{ r.cnt ? pct(r.util) : '-' }}</td>
-                                    <td>{{ money(r.revenue + r.sale) }}</td><td>{{ money(r.cost) }}</td><td>{{ money(r.pers) }}</td><td :class="netClass(r.net)">{{ money(r.net) }}</td></tr>
-                            </tbody>
-                        </table>
-                        <!-- Model -->
-                        <table class="table table-hover align-middle mb-0 text-end" v-if="detailTab === 'model'">
-                            <thead class="table-light"><tr><th class="text-start">Araç</th><th>Segment</th><th>Öncelik</th><th>Adet</th><th>Çalışılan Gün</th><th>Boşta Gün</th><th>Doluluk</th><th>Gelir</th><th>Araç Gideri</th><th>Personel Gideri</th><th>Net</th></tr></thead>
-                            <tbody>
-                                <tr v-for="r in view.modelRows" :key="r.v.id"><td class="text-start"><img :src="r.v.imageBase64 || placeholder" class="rounded me-2" style="width:40px;height:30px;object-fit:cover"><b>{{ r.v.markaModel }}</b></td>
-                                    <td>{{ r.v.segment }}</td><td>{{ rankOf[r.v.id] }}</td><td>{{ r.cnt }}</td><td>{{ formatCurrency(r.work) }}</td><td>{{ formatCurrency(r.idle) }}</td><td>{{ pct(r.util) }}</td>
-                                    <td>{{ money(r.revenue + r.sale) }}</td><td>{{ money(r.cost) }}</td><td>{{ money(r.pers) }}</td><td :class="netClass(r.net)">{{ money(r.net) }}</td></tr>
-                            </tbody>
-                        </table>
-                        <!-- Gider -->
+                    <div class="small text-muted mb-2"><i class="bi bi-arrow-down-up"></i> Sütun başlığına tıklayınca büyükten küçüğe, tekrar tıklayınca küçükten büyüğe sıralanır.</div>
+                    <div class="card shadow-sm border-0">
+                        <div class="table-responsive" v-if="detailTab === 'yillik'"><sort-table :key="'t-yillik'" v-bind="detailTables.yillik"></sort-table></div>
+                        <div class="table-responsive" v-if="detailTab === 'segment'"><sort-table :key="'t-seg'" v-bind="detailTables.segment"></sort-table></div>
+                        <div class="table-responsive" v-if="detailTab === 'model'"><sort-table :key="'t-model'" v-bind="detailTables.model"></sort-table></div>
                         <div v-if="detailTab === 'gider'" class="row g-0">
-                            <div class="col-lg-7"><table class="table table-hover align-middle mb-0 text-end">
-                                <thead class="table-light"><tr><th class="text-start">Gider Kalemi</th><th class="text-start">Grup</th><th class="text-start">Kategori</th><th>Tutar</th><th>Pay</th></tr></thead>
-                                <tbody><tr v-for="r in view.itemRows" :key="r.grup + r.kalem"><td class="text-start">{{ r.kalem }}</td><td class="text-start">{{ r.grup }}</td><td class="text-start">{{ r.kategori }}</td><td>{{ money(r.tutar) }}</td><td>{{ pct(view.itemTotal ? r.tutar / view.itemTotal * 100 : 0) }}</td></tr></tbody>
-                            </table></div>
-                            <div class="col-lg-5 border-start"><table class="table table-hover align-middle mb-0 text-end">
-                                <thead class="table-light"><tr><th class="text-start">Kategori</th><th class="text-start">Grup</th><th>Tutar</th><th>Pay</th></tr></thead>
-                                <tbody><tr v-for="r in view.catRows" :key="r.grup + r.kategori"><td class="text-start fw-bold">{{ r.kategori }}</td><td class="text-start">{{ r.grup }}</td><td>{{ money(r.tutar) }}</td><td>{{ pct(view.itemTotal ? r.tutar / view.itemTotal * 100 : 0) }}</td></tr></tbody>
-                            </table></div>
+                            <div class="col-lg-7 table-responsive"><sort-table :key="'t-gi'" v-bind="detailTables.giderItems"></sort-table></div>
+                            <div class="col-lg-5 border-start table-responsive"><sort-table :key="'t-gc'" v-bind="detailTables.giderCats"></sort-table></div>
                         </div>
-                        <!-- Plaka -->
                         <div v-if="detailTab === 'plaka'">
                             <div class="p-2"><input type="text" class="form-control form-control-sm" style="max-width:320px" v-model="plateSearch" placeholder="Plaka, model veya segment ara..."></div>
-                            <table class="table table-hover align-middle mb-0 text-end">
-                                <thead class="table-light"><tr><th class="text-start">Plaka</th><th class="text-start">Araç</th><th>Segment</th><th>Dosya</th><th>Çalışılan</th><th>Boşta</th><th style="width:110px">Doluluk</th><th>Gelir</th><th>Araç Gideri</th><th>Personel</th><th>Net</th></tr></thead>
-                                <tbody>
-                                    <tr v-for="r in view.plateRows.slice(0, plateLimit)" :key="r.p.id" class="cursor-pointer" @click="showPlate(r.p)">
-                                        <td class="text-start fw-bold">{{ r.p.plate }}</td><td class="text-start">{{ r.p.model }}</td><td>{{ r.p.seg }}</td><td>{{ Math.round(r.files1) }}</td>
-                                        <td>{{ formatCurrency(r.work) }}</td><td>{{ formatCurrency(r.idle) }}</td>
-                                        <td><div class="progress" style="height:8px"><div class="progress-bar bg-orange" :style="{width: r.util + '%'}"></div></div></td>
-                                        <td>{{ money(r.revenue + r.sale) }}</td><td>{{ money(r.cost) }}</td><td>{{ money(r.pers) }}</td><td :class="netClass(r.net)">{{ money(r.net) }}</td></tr>
-                                    <tr v-if="!view.plateRows.length"><td colspan="11" class="text-center text-muted py-3">Sonuç yok</td></tr>
-                                </tbody>
-                            </table>
+                            <div class="table-responsive"><sort-table :key="'t-plaka'" v-bind="detailTables.plaka" :limit="plateLimit" clickable @row="r => showPlate(r.p)"></sort-table></div>
                             <div class="p-2 text-center" v-if="view.plateCount > plateLimit"><button class="btn btn-sm btn-outline-orange" @click="plateLimit += 200">Daha fazla göster ({{ view.plateCount - plateLimit }} araç daha)</button></div>
                             <div class="p-2 small text-muted">Satıra tıklayarak plakanın yıllık ve gider kalemi detayını görebilirsiniz. "Dosya" aracın tarihçe döneminde aldığı dosya sayısıdır.</div>
                         </div>
-                    </div></div>
+                        <div v-if="detailTab === 'ay'">
+                            <div class="table-responsive"><sort-table :key="'t-ay'" v-bind="detailTables.ay"></sort-table></div>
+                            <div class="p-2 small text-muted">Talep, karşılanan ve dosya geliri dosyanın teslim ayına yazılır; dolu gün ve doluluk ise kiralamanın takvimde gerçekten geçtiği aya göre hesaplanır (ay sonuna taşan kiralama iki aya bölünür). {{ filters.year === 'all' ? 'Yıl: Tümü iken her ay, tüm tahminleme yıllarındaki aynı ayın toplamıdır.' : filters.year + ' yılı gösteriliyor.' }} Giderler (araç + personel) yıllık tutarın ayın gün sayısı kadarıdır; araç satış geliri dahil değildir. Kümülatif net, aylar sırasıyla toplanır (sıralama değişse de takvim sırasına göre hesaplanır).</div>
+                        </div>
+                    </div>
                 </div>
                 <div class="card shadow-sm border-0" v-else-if="vehicles.length && historicalData.length">
                     <div class="empty-state">
                         <i class="bi bi-sliders"></i>
                         <div class="es-title">Henüz filoda araç yok</div>
                         <div class="es-text">Araç kartlarından adet belirleyin ya da yukarıdan bir hedef karşılama oranı seçin; analiz burada görünür.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================= Çalışma Rehberi ================= -->
+            <div v-if="activeTab === 'rehber'" class="row g-3">
+                <div class="col-lg-3">
+                    <div class="guide-nav">
+                        <a href="#" v-for="g in guide" :key="g.id" :class="{active: guideId === g.id}" @click.prevent="guideId = guideId === g.id ? null : g.id">
+                            <i class="bi me-2" :class="g.icon"></i>{{ g.title }}<i class="bi ms-auto" :class="guideId === g.id ? 'bi-chevron-down' : 'bi-chevron-right'"></i></a>
+                    </div>
+                </div>
+                <div class="col-lg-9">
+                    <div class="card shadow-sm border-0" v-if="guideItem">
+                        <div class="card-body p-4">
+                            <h4 class="text-orange mb-1"><i class="bi me-2" :class="guideItem.icon"></i>{{ guideItem.title }}</h4>
+                            <p class="text-muted">{{ guideItem.intro }}</p>
+                            <div class="guide-sec" v-for="(sec, i) in guideItem.sections" :key="i">
+                                <h6>{{ sec.h }}</h6>
+                                <ul><li v-for="(it, j) in sec.items" :key="j">{{ it }}</li></ul>
+                            </div>
+                            <button class="btn btn-sm btn-outline-orange mt-2" v-if="guideItem.id !== 'genel'" @click="go(guideItem.id)"><i class="bi bi-box-arrow-up-right"></i> {{ guideItem.title }} sayfasına git</button>
+                        </div>
+                    </div>
+                    <div class="card shadow-sm border-0" v-else>
+                        <div class="empty-state">
+                            <i class="bi bi-book"></i>
+                            <div class="es-title">Rehberini okumak istediğiniz sayfayı seçin</div>
+                            <div class="es-text">Soldaki listeden bir sayfaya tıklayınca o sayfadaki başlıkların ne işe yaradığı ve hesapların hangi mantıkla yapıldığı açılır.</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -709,6 +726,16 @@
                         <div class="small text-muted ms-auto">Filtreler simülatörle ortaktır. Senaryo: <b>{{ settings.sim.target === 'manual' ? 'Manuel adet' : (settings.sim.target === 'best' ? 'En kârlı filo' : '%' + settings.sim.target + ' karşılama') }}</b>{{ settings.sim.up ? ' · üst segment açık' : '' }}{{ settings.sim.down ? ' · alt segment açık' : '' }}</div>
                     </div></div>
 
+                    <!-- Senaryo kısayolları -->
+                    <div class="card shadow-sm border-0 mb-3" v-if="settings.scenarios.length">
+                        <div class="card-body py-2 scenario-row">
+                            <span class="small text-muted me-1"><i class="bi bi-bookmarks"></i> Senaryo kısayolları:</span>
+                            <button v-for="s in settings.scenarios" :key="s.id" class="btn btn-sm sc-short" :class="activeScenarioId === s.id ? 'btn-orange' : 'btn-outline-orange'"
+                                @click="applyScenario(s)" :title="scenarioTitle(s) + (s.by ? ' · Sahibi: ' + s.by : '') + (s.not ? '\n' + s.not : '')">{{ s.ad }}</button>
+                            <span class="small text-muted">Tıklayınca senaryo uygulanır ve tüm rapor ona göre yenilenir.<span v-if="!activeScenarioId"> Şu an kayıtlı bir senaryoyla eşleşmeyen bir durum gösteriliyor.</span></span>
+                        </div>
+                    </div>
+
                     <!-- Yönetici özeti -->
                     <div class="card shadow-sm border-0 mb-3 exec-card">
                         <div class="card-body">
@@ -731,6 +758,8 @@
                                 <div class="an-title">{{ bl.title }}</div>
                                 <div class="an-sub">{{ bl.sub }}</div>
                             </div>
+                            <select class="form-select form-select-sm w-auto" v-if="bl.sens" v-model.number="sensP" title="Değişim oranı">
+                                <option :value="5">±%5</option><option :value="10">±%10</option><option :value="20">±%20</option></select>
                             <select class="form-select form-select-sm w-auto" v-if="bl.segSelect" :value="curveSeg" @change="reportSeg = $event.target.value" :disabled="filters.seg !== 'all'" title="Segment">
                                 <option v-for="s in curveSegs" :key="s" :value="s">{{ s }} Segmenti</option></select>
                         </div>
@@ -745,22 +774,6 @@
                                 </table>
                             </div></div>
                         </div>
-                    </div>
-
-                    <!-- Senaryo karşılaştırması -->
-                    <div class="card shadow-sm border-0 mb-3">
-                        <div class="card-header bg-white d-flex justify-content-between align-items-center"><h6 class="mb-0 text-orange">Senaryo Karşılaştırması</h6>
-                            <span class="small text-muted">Tüm yıllar ve tüm segmentler (filtreden bağımsız)</span></div>
-                        <div class="table-responsive"><table class="table table-hover align-middle mb-0 text-end">
-                            <thead class="table-light"><tr><th class="text-start">Senaryo</th><th>Araç</th><th>Karşılama</th><th>Doluluk</th><th>Gelir</th><th>Gider</th><th>Filo Neti</th><th v-if="hasSupplier">Şirket Neti</th><th>Araç Başı Net</th><th></th></tr></thead>
-                            <tbody>
-                                <tr v-for="r in scenarioCompare" :key="r.id || 'cur'" :class="{'table-warning': r.id === null}">
-                                    <td class="text-start"><b>{{ r.label }}</b><div class="small text-muted" v-if="r.id && (settings.scenarios.find(x => x.id === r.id) || {}).by">Sahibi: {{ settings.scenarios.find(x => x.id === r.id).by }}</div><div class="small text-muted text-wrap" style="max-width:320px" v-if="r.id && (settings.scenarios.find(x => x.id === r.id) || {}).not">{{ settings.scenarios.find(x => x.id === r.id).not }}</div></td><td>{{ formatCurrency(r.plates) }}</td><td :class="ratioClass(r.ratio)">{{ pct(r.ratio) }}</td><td>{{ pct(r.util) }}</td>
-                                    <td>{{ shortMoney(r.gelir) }}</td><td>{{ shortMoney(r.gider) }}</td><td class="fw-bold" :class="netClass(r.net)">{{ shortMoney(r.net) }}</td><td v-if="hasSupplier" class="fw-bold" :class="netClass(r.company)">{{ shortMoney(r.company) }}</td><td :class="netClass(r.perPlate)">{{ shortMoney(r.perPlate) }}</td>
-                                    <td><button class="btn btn-sm btn-outline-orange" v-if="r.id" @click="applyScenario(settings.scenarios.find(s => s.id === r.id))">Uygula</button></td></tr>
-                                <tr v-if="!settings.scenarios.length"><td colspan="10" class="text-center text-muted small py-3">Karşılaştırma için simülatörde "Senaryoyu Kaydet" ile senaryo kaydedin.</td></tr>
-                            </tbody>
-                        </table></div>
                     </div>
 
                     <!-- Detaylı veri seti -->
@@ -804,6 +817,8 @@
 
             </div>
         </div> <!-- /Main -->
+
+        <button class="present-exit no-print" v-if="present" @click="present = false"><i class="bi bi-fullscreen-exit"></i> Sunum modundan çık (Esc)</button>
 
         <!-- Kart açıklaması -->
         <div class="kpi-tip" v-if="tip.show" :class="{up: tip.up}" :style="{left: tip.x + 'px', top: tip.y + 'px'}">{{ tip.text }}</div>
@@ -1025,6 +1040,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
     <script src="firebase-config.js"></script>
     <script src="engine.js"></script>
+    <script src="guide.js"></script>
     <script src="sync.js"></script>
     <script src="app.js"></script>
 </body>

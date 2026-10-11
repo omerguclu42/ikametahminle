@@ -251,7 +251,7 @@
         opts = opts || {};
         const pools = {}, byUnit = {};
         units.forEach(u => {
-            const st = { id: u.id, seg: u.seg, freeAt: -Infinity, iv: [], days: 0, files: 0, price: {}, cross: {},
+            const st = { id: u.id, seg: u.seg, freeAt: -Infinity, iv: [], days: 0, files: 0, price: {}, cross: {}, occ: Array(12).fill(0),
                 m: Array.from({ length: 12 }, () => ({ days: 0, files: 0, price: {} })) };
             byUnit[u.id] = st; (pools[u.seg] = pools[u.seg] || []).push(st);
         });
@@ -271,6 +271,11 @@
             a.unit = st.id; a.given = st.seg; a.kind = kind;
             ss.handled++; ss.days += rd; ss[kind]++; sm.handled++; sm.days += rd; sm[kind]++;
             st.files++; st.days += rd; st.price[priceSeg] = (st.price[priceSeg] || 0) + rd;
+            // Doluluk için kiralama günleri takvimdeki gerçek aylarına bölüştürülür (ay sonuna taşan kiralama)
+            if (a.e > a.s) {
+                let t = a.s; const tot = a.e - a.s;
+                while (t < a.e) { const d = new Date(t), nx = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime(), e2 = Math.min(a.e, nx); st.occ[d.getMonth()] += rd * (e2 - t) / tot; t = e2; }
+            } else st.occ[a.mi] += rd;
             const bm = st.m[a.mi]; bm.files++; bm.days += rd; bm.price[priceSeg] = (bm.price[priceSeg] || 0) + rd;
             if (kind !== 'own') {
                 const key = kind + '|' + a.seg + '|' + st.seg;
@@ -389,7 +394,7 @@
         Object.values(segModels).forEach(list => list.sort((a, b) => vehicleCosts[a.id].annualNet - vehicleCosts[b.id].annualNet || vIndex(a) - vIndex(b)));
 
         // Filo eğrisi: her segment için araç sayısına göre karşılama ve (personel hariç) net
-        const curves = {}, counts = {}, noModel = [];
+        const curves = {}, counts = {}, noModel = [], marginal = {};
         complete.forEach(v => { counts[v.id] = baseCount(v); });
         // Personel kilidi açıksa personel sayısı = araç ÷ (kaç araca 1 personel); her araç personel maliyetinin 1/oran'ını getirir
         const pRatio = num(settings.personelOrani), autoPers = !settings.personelKilit && pRatio > 0;
@@ -436,6 +441,16 @@
                 points.push({ n: N, coverage: total ? cumF / total * 100 : 0, handled: cumF, net: sNet ? sNet[N] : null, total: sTot ? sTot[N] + base : null });
             }
             const hasSup = years.some(y => sup(seg, y) > 0);
+            // +1 araç etkisi: bu modelden bir araç daha eklenirse (ucuzdan pahalıya sıraya girer) şirket neti ne kadar değişir
+            if (cheapest) {
+                const baseTot = existing.reduce((a, v, k) => a + fTot(k, v), 0);
+                models.forEach(v => {
+                    const c = vehicleCosts[v.id].annualNet;
+                    let pos = existing.findIndex(x => vehicleCosts[x.id].annualNet > c); if (pos < 0) pos = existing.length;
+                    const arr = [...existing.slice(0, pos), v, ...existing.slice(pos)];
+                    marginal[v.id] = arr.reduce((a, u, k) => a + fTot(k, u), 0) - baseTot;
+                });
+            }
             curves[seg] = { total, peak: curve.length, existing: E0, points, hasModel: !!cheapest, hasSup, autoPers };
             if (target === 'manual') return;
             let N = 0;
@@ -474,7 +489,7 @@
                 const mRev = st.m.map(m => revOf(m.price, y));
                 byYear[y] = { work, idle, revenue, sale, op, buy, int, cost, pers: 0, persShare: 0, net: revenue + sale - cost, mRev };
             });
-            const months = st.m.map(m => ({ work: Math.round(m.days * scale), files: m.files * scale }));
+            const months = st.m.map((m, i) => ({ work: Math.round(m.days * scale), occ: st.occ[i] * scale, files: m.files * scale }));
             return { id: u.id, plate: u.plate, seg: u.seg, vid: u.v.id, model: u.v.markaModel, life: ct.life, work, idle, files: st.files * scale,
                 months, byYear, cross: Object.values(st.cross), price: st.price };
         });
@@ -489,7 +504,7 @@
                 r.persShare = share; r.pers = pers.totals[y] * share; r.net -= r.pers;
             });
         });
-        return { years, plates, vehicleCosts, pers, sim, curves, counts, noModel, incomplete, segModels,
+        return { years, plates, vehicleCosts, pers, sim, curves, counts, noModel, incomplete, segModels, marginal,
             missingRates: [...missingRates], unsold: [...unsold], period, scale, dataYear: sim.dataYear, target };
     }
 
