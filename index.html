@@ -301,11 +301,11 @@
                         <input type="file" hidden @change="handleFileUpload" accept=".xlsx,.xls,.csv"></label>
                 </div>
                 <div class="alert alert-info border-0 shadow-sm">
-                    <strong>Bilgi:</strong> Yükleyeceğiniz Excel/CSV dosyasında <code>Dosya Numarası</code>, <code>Segment</code>, <code>Araç Teslimat Tarihi</code> ve <code>Araç İade Tarihi</code> sütun başlıkları bulunmalıdır (tarihler saat içermelidir). <b>Yeni bir dosya yüklediğinizde mevcut tarihçe silinir</b> ve yerine yeni veriler yazılır (onay istenir).
+                    <strong>Bilgi:</strong> Yükleyeceğiniz Excel/CSV dosyasında <code>Dosya Numarası</code>, <code>Segment</code>, <code>Müşteri</code>, <code>Araç Teslimat Tarihi</code> ve <code>Araç İade Tarihi</code> sütun başlıkları bulunmalıdır (tarihler saat içermelidir). Aynı müşteri birden çok dosyada geçebilir; müşteriler tekrarsız listelenir ve büyük/küçük harf farkı aynı müşteri sayılır. Müşteri sütunu yoksa dosyalar müşterisiz yüklenir. <b>Yeni bir dosya yüklediğinizde mevcut tarihçe silinir</b> ve yerine yeni veriler yazılır (onay istenir).
                 </div>
                 <div class="card shadow-sm border-0 mb-3" v-if="showPaste">
                     <div class="card-body">
-                        <label class="form-label">Excel'den kopyalayıp yapıştırın (4 sütun: Dosya No, Segment, Teslimat, İade; başlık satırı olabilir)</label>
+                        <label class="form-label">Excel'den kopyalayıp yapıştırın (başlık satırıyla ya da sırayla: Dosya No, Segment, Teslimat, İade, Müşteri)</label>
                         <textarea class="form-control mb-2" rows="5" v-model="pasteText"></textarea>
                         <button class="btn btn-orange" @click="addPasted" :disabled="!pasteText.trim()">Yapıştırılan Veriyi Yükle (mevcutların yerine)</button>
                     </div>
@@ -315,11 +315,11 @@
                     <div class="card-body p-0">
                         <div class="table-responsive" style="max-height: 520px; overflow-y: auto;">
                             <table class="table table-striped table-hover mb-0">
-                                <thead class="table-light sticky-top"><tr><th>#</th><th>Dosya Numarası</th><th>Segment</th><th>Teslimat Tarihi</th><th>İade Tarihi</th></tr></thead>
+                                <thead class="table-light sticky-top"><tr><th>#</th><th>Dosya Numarası</th><th>Segment</th><th>Müşteri</th><th>Teslimat Tarihi</th><th>İade Tarihi</th></tr></thead>
                                 <tbody>
                                     <tr v-for="(row, idx) in histRows" :key="(histPage - 1) * histSize + idx">
                                         <td>{{ (histPage - 1) * histSize + idx + 1 }}</td><td>{{ row.dosyaNo }}</td>
-                                        <td><span class="badge bg-secondary">{{ row.segment }}</span></td><td>{{ row.teslimat }}</td><td>{{ row.iade }}</td>
+                                        <td><span class="badge bg-secondary">{{ row.segment }}</span></td><td><span v-if="row.musteri">{{ row.musteri }}</span><span v-else class="text-muted small">—</span></td><td>{{ row.teslimat }}</td><td>{{ row.iade }}</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -328,7 +328,7 @@
                     <div class="card-footer bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
                         <div class="d-flex align-items-center gap-2 small text-muted">Sayfa başına
                             <select class="form-select form-select-sm w-auto" v-model.number="histSize"><option>50</option><option>100</option><option>250</option><option>500</option></select>
-                            · Toplam {{ historicalData.length }} kayıt</div>
+                            · Toplam {{ historicalData.length }} kayıt · <b>{{ histCustomers.list.length }}</b> müşteri<span v-if="hasCustomers && histCustomers.none"> · {{ formatCurrency(histCustomers.none) }} dosyada müşteri boş</span></div>
                         <nav v-if="histPages > 1"><ul class="pagination pagination-sm mb-0">
                             <li class="page-item" :class="{disabled: histPage === 1}"><a class="page-link" href="#" @click.prevent="histPage--">‹</a></li>
                             <li class="page-item" v-for="(b, i) in pageButtons" :key="i" :class="{active: b === histPage, disabled: b === '…'}">
@@ -367,7 +367,109 @@
 
             <!-- ================= Günlük Tutar ================= -->
             <div v-if="activeTab === 'gunlukTutar'">
+                <!-- Uyarılar -->
+                <div class="alert alert-warning d-flex gap-2 align-items-start" v-if="!hasCustomers">
+                    <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+                    <div><b>Henüz tarihçeye eklenen müşteri bilgisi yoktur.</b>
+                        <div class="small">Tarihçe dosyanıza <code>Müşteri</code> sütunu ekleyip yeniden yüklediğinizde müşteri listesi burada açılır ve her müşteri için segment bazlı kendi ve tedarikçi günlük tutarlarını girebilirsiniz. O zamana kadar aşağıdaki varsayılan tutarlar kullanılır.</div></div>
+                </div>
+                <template v-else>
+                    <div class="alert alert-warning d-flex gap-2 align-items-start" v-if="custMissingOwn.length">
+                        <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+                        <div><b>Günlük tutarı girilmemiş {{ custMissingOwn.length }} müşteri var:</b> {{ custMissingOwn.join(', ') }}
+                            <div class="small">Bu müşterilerin dosyalarında, talep ettikleri segment ve yıllarda kendi günlük tutarı eksik. Eksik hücrelerde varsayılan tutar kullanılır; varsayılan da boşsa gelir 0 hesaplanır.</div></div>
+                    </div>
+                    <div class="alert alert-light border d-flex gap-2 align-items-start small" v-if="custMissingSup.length">
+                        <i class="bi bi-info-circle text-orange mt-1"></i>
+                        <div><b>Tedarikçi günlük tutarı girilmemiş {{ custMissingSup.length }} müşteri:</b> {{ custMissingSup.join(', ') }}. Bu müşterilerin araç veremediğimiz dosyaları (varsayılan tedarikçi tutarı da yoksa) kaybedilmiş sayılır.</div>
+                    </div>
+                    <div class="alert alert-success py-2 small" v-if="!custMissingOwn.length && !custMissingSup.length"><i class="bi bi-check-circle"></i> Tüm müşterilerin kendi ve tedarikçi günlük tutarları girilmiş.</div>
+
+                    <div class="card shadow-sm border-0 mb-4">
+                        <div class="card-header bg-white d-flex flex-wrap gap-3 align-items-end">
+                            <div>
+                                <label class="small text-muted d-block">Müşteri ({{ histCustomers.list.length }})</label>
+                                <select class="form-select" style="min-width:380px" v-model="gtCust">
+                                    <option v-for="o in histCustomers.list" :key="o.c" :value="o.c">{{ custOptionLabel(o) }}</option>
+                                </select>
+                            </div>
+                            <div class="ms-auto d-flex gap-2 align-items-end flex-wrap">
+                                <div>
+                                    <label class="small text-muted d-block">Tutarları kopyala</label>
+                                    <div class="input-group input-group-sm">
+                                        <select class="form-select" v-model="gtCopyFrom" style="max-width:220px">
+                                            <option value="__default">Varsayılan tutarlardan</option>
+                                            <option v-for="o in histCustomers.list.filter(x => x.c !== gtCust)" :key="o.c" :value="o.c">{{ o.c }}</option>
+                                        </select>
+                                        <button class="btn btn-outline-orange" @click="copyCustRates" :disabled="!gtCust"><i class="bi bi-clipboard-check"></i> Kopyala</button>
+                                    </div>
+                                </div>
+                                <div class="dropdown">
+                                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" :disabled="!custEntry || histCustomers.list.length < 2"><i class="bi bi-people"></i> Diğer müşterilere uygula</button>
+                                    <ul class="dropdown-menu dropdown-menu-end">
+                                        <li><a class="dropdown-item" href="#" @click.prevent="applyCustRatesToAll(true)">Yalnızca eksik hücreleri doldur</a></li>
+                                        <li><a class="dropdown-item" href="#" @click.prevent="applyCustRatesToAll(false)">Tüm müşterilerin üzerine yaz</a></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-body" v-if="custEntry">
+                            <p class="text-muted small mb-2"><b>{{ gtCust }}</b> müşterisinin talep ettiği segmentler turuncu işaretlidir (dosya sayısıyla). Alt segment araç verilen dosya verilen segmentin tutarıyla fiyatlandığı için diğer segmentleri de doldurmanız önerilir. Boş bırakılan hücrede varsayılan tutar kullanılır.</p>
+                            <div class="row g-4">
+                                <div class="col-xl-6">
+                                    <h6 class="text-orange">Müşteri Günlük Tutarı (₺) <small class="text-muted fw-normal">· müşteriye yansıtılan</small></h6>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm align-middle mb-0 rate-table">
+                                            <thead class="table-light"><tr><th style="width:120px">Segment</th><th v-for="y in years" :key="y" style="min-width:130px">{{ y }}</th></tr></thead>
+                                            <tbody>
+                                                <tr v-for="s in segments" :key="s" :class="{'seg-used': custRateStatus[gtCust] && custRateStatus[gtCust].segs.includes(s)}">
+                                                    <th>{{ s }} <span class="badge bg-orange-soft" v-if="histCustomers.list.find(o => o.c === gtCust) && histCustomers.list.find(o => o.c === gtCust).segs[s]">{{ formatCurrency(histCustomers.list.find(o => o.c === gtCust).segs[s]) }}</span></th>
+                                                    <td v-for="y in years" :key="s + y"><num-input v-model="custEntry.gunluk[s][y]" :step="1" :invalid="custRateStatus[gtCust] && custRateStatus[gtCust].own.includes(s) && (custEntry.gunluk[s][y] === null || custEntry.gunluk[s][y] === '')"></num-input></td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <div class="col-xl-6">
+                                    <h6 class="text-orange">Tedarikçi Günlük Tutarı (₺) <small class="text-muted fw-normal">· tedarikçiye ödenen</small></h6>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm align-middle mb-0 rate-table">
+                                            <thead class="table-light"><tr><th style="width:120px">Segment</th><th v-for="y in years" :key="y" style="min-width:130px">{{ y }}</th></tr></thead>
+                                            <tbody>
+                                                <tr v-for="s in segments" :key="s" :class="{'seg-used': custRateStatus[gtCust] && custRateStatus[gtCust].segs.includes(s)}">
+                                                    <th>{{ s }}</th>
+                                                    <td v-for="y in years" :key="s + y"><num-input v-model="custEntry.tedarikci[s][y]" :step="1"></num-input></td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                            <h6 class="text-orange mt-4">Günlük Marj (Müşteri − Tedarikçi) · {{ gtCust }}</h6>
+                            <div class="table-responsive">
+                                <table class="table table-sm text-end mb-0">
+                                    <thead class="table-light"><tr><th class="text-start" style="width:120px">Segment</th><th v-for="y in years" :key="y">{{ y }}</th></tr></thead>
+                                    <tbody>
+                                        <tr v-for="s in segments" :key="s">
+                                            <th class="text-start">{{ s }}</th>
+                                            <td v-for="y in years" :key="s + y" :class="report.rates.sup(gtCust, s, y) > 0 ? netClass(report.rates.rate(gtCust, s, y) - report.rates.sup(gtCust, s, y)) : 'text-muted'">
+                                                {{ report.rates.sup(gtCust, s, y) > 0 ? money(report.rates.rate(gtCust, s, y) - report.rates.sup(gtCust, s, y)) + ' (' + pct(report.rates.rate(gtCust, s, y) ? (report.rates.rate(gtCust, s, y) - report.rates.sup(gtCust, s, y)) / report.rates.rate(gtCust, s, y) * 100 : 0) + ')' : '-' }}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="small text-muted mt-1">Marj, boş hücrelerde varsayılan tutarlarla hesaplanır.</div>
+                        </div>
+                    </div>
+                    <div class="alert alert-light border small d-flex align-items-center gap-2" v-if="orphanRates.length">
+                        <i class="bi bi-archive"></i> Tarihçede artık bulunmayan {{ orphanRates.length }} müşterinin tutarları saklanıyor ({{ orphanRates.join(', ') }}).
+                        <button class="btn btn-sm btn-outline-secondary ms-auto" @click="removeOrphanRates">Temizle</button>
+                    </div>
+                </template>
+
+                <!-- Varsayılan tutarlar -->
                 <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-header bg-white"><h5 class="mb-0">{{ hasCustomers ? 'Varsayılan Günlük Tutarlar' : 'Günlük Tutar' }} <small class="text-muted fw-normal fs-6" v-if="hasCustomers">· müşterisi belirtilmemiş dosyalar ve müşteride boş bırakılan hücreler için</small></h5></div>
                     <div class="card-body">
                         <p class="text-muted">Segment ve yıla göre araç başı günlük kira tutarı (₺). Simülatörde gelir = aracın o yıl çalıştığı gün sayısı × günlük tutar olarak hesaplanır. Üst segment araç verilen dosya talep edilen segmentin, alt segment araç verilen dosya verilen segmentin tutarıyla fiyatlanır.</p>
                         <div class="table-responsive">
@@ -388,7 +490,7 @@
                     </div>
                 </div>
                 <div class="card shadow-sm border-0 mb-4">
-                    <div class="card-header bg-white"><h5 class="mb-0">Tedarikçi Günlük Tutarı (₺)</h5></div>
+                    <div class="card-header bg-white"><h5 class="mb-0">{{ hasCustomers ? 'Varsayılan ' : '' }}Tedarikçi Günlük Tutarı (₺)</h5></div>
                     <div class="card-body">
                         <p class="text-muted">Araç veremediğimiz dosyalar tedarikçiye verilir. Tedarikçiye ödenen günlük tutarı segment ve yıla göre girin. Marj = müşteriye yansıtılan günlük tutar − tedarikçi tutarı. Tutar girilmeyen segment/yılda dosya kaybedilmiş sayılır.
                             "En kârlı filo" seçeneği tedarikçi marjını da hesaba katar: aracın çalıştığı gün başına maliyeti tedarikçi tutarından düşükse araç eklemek kârlıdır.</p>
@@ -441,7 +543,7 @@
                 <div class="alert alert-warning py-2 d-flex align-items-center flex-wrap gap-2" v-if="horizonIssues.length"><span><i class="bi bi-exclamation-triangle"></i> Tahminleme <b>{{ years.length }} yıl</b> ama şu araçların optimum satış yılı farklı: <b>{{ horizonIssues.map(h => h.ad + ' (' + h.opt + ' yıl)').join(', ') }}</b>. Optimum satış yılı tahminleme yılıyla aynı olmalı; aksi halde araç erken satılır ya da satış geliri hesaba girmez.</span>
                     <button class="btn btn-sm btn-warning ms-auto" @click="alignOptYears"><i class="bi bi-arrow-left-right"></i> Hepsini {{ years.length }} yıla eşitle</button></div>
                 <div class="alert alert-warning py-2" v-if="settings.personelTanimlari.length && !settings.personelSayisi"><i class="bi bi-exclamation-triangle"></i> Personel başlıkları var ama personel sayısı girilmemiş; personel gideri 0 hesaplanır.</div>
-                <div class="alert alert-warning py-2" v-if="report.missingRates.length && totalPlates"><i class="bi bi-exclamation-triangle"></i> Günlük tutar girilmemiş (gelir 0 hesaplanır): {{ report.missingRates.join(', ') }}</div>
+                <div class="alert alert-warning py-2" v-if="report.missingRates.length && totalPlates"><i class="bi bi-exclamation-triangle"></i> Günlük tutar girilmemiş (gelir 0 hesaplanır): {{ missingRatesText }} · <a href="#" class="alert-link" @click.prevent="go('gunlukTutar')">Günlük Tutar sayfasına git</a></div>
                 <div class="alert alert-warning py-2" v-if="report.noModel.length"><i class="bi bi-exclamation-triangle"></i> Hedef oran için araç eklenemedi, bu segmentlerde tanımlı (eksiksiz) araç modeli yok: {{ report.noModel.join(', ') }}</div>
 
                 <!-- Simülasyon ayarları -->
@@ -543,16 +645,13 @@
                 <div v-if="totalPlates">
                     <!-- Filtreler -->
                     <div class="card shadow-sm border-0 mb-3"><div class="card-body py-2 d-flex gap-3 align-items-end flex-wrap">
-                        <div><label class="small text-muted">Yıl</label>
-                            <select class="form-select form-select-sm" v-model="filters.year"><option value="all">Tümü</option><option v-for="y in years" :key="y" :value="y">{{ y }}</option></select></div>
-                        <div><label class="small text-muted">Ay</label>
-                            <select class="form-select form-select-sm" v-model="filters.month"><option value="all">Tümü</option><option v-for="(m, i) in months" :key="i" :value="i">{{ m }}</option></select></div>
-                        <div><label class="small text-muted">Segment</label>
-                            <select class="form-select form-select-sm" v-model="filters.seg"><option value="all">Tümü</option><option v-for="s in segments" :key="s" :value="s">{{ s }} Segmenti</option></select></div>
-                        <div><label class="small text-muted">Marka</label>
-                            <select class="form-select form-select-sm" v-model="filters.vid"><option value="all">Tümü</option><option v-for="v in brandOptions" :key="v.id" :value="v.id">{{ v.markaModel }}</option></select></div>
+                        <div><label class="small text-muted">Yıl</label><multi-select v-model="filters.year" :options="filterOpts.year" width="120px"></multi-select></div>
+                        <div><label class="small text-muted">Ay</label><multi-select v-model="filters.month" :options="filterOpts.month" width="140px"></multi-select></div>
+                        <div><label class="small text-muted">Segment</label><multi-select v-model="filters.seg" :options="filterOpts.seg" width="140px"></multi-select></div>
+                        <div><label class="small text-muted">Marka Model</label><multi-select v-model="filters.vid" :options="filterOpts.vid" width="180px" :search="filterOpts.vid.length > 8"></multi-select></div>
+                        <div><label class="small text-muted">Müşteri</label><multi-select v-model="filters.cust" :options="filterOpts.cust" width="200px" search :placeholder="hasCustomers ? 'Tümü' : 'Müşteri bilgisi yok'"></multi-select></div>
                         <div><button class="btn btn-sm btn-outline-secondary" :disabled="!filtersActive" @click="clearFilters"><i class="bi bi-funnel"></i> Filtreleri Temizle</button></div>
-                        <div class="small text-muted ms-auto" style="max-width:520px">Toplam {{ totalPlates }} araç plakası. "Yıl: Tümü" iken tüm kullanım yılları toplanır. Ay seçiliyken o ay teslim edilen dosyalar esas alınır; yıllık giderler ayın gün sayısına oranlanır ve araç satışı dahil edilmez.</div>
+                        <div class="small text-muted w-100 filter-help">Toplam {{ totalPlates }} araç plakası. Her filtrede birden çok seçim yapılabilir; boş bırakılan filtre "Tümü" demektir. Ay seçiliyken o aylarda teslim edilen dosyalar esas alınır; yıllık giderler ayların gün sayısına oranlanır ve araç satışı dahil edilmez. Müşteri seçiliyken gelir o müşterilerin dosyalarından, giderler ise araç başına müşterinin kiralama günü payıyla hesaplanır.</div>
                     </div></div>
 
                     <!-- Özet kartlar -->
@@ -647,13 +746,18 @@
 
                     <!-- Detay sekmeleri -->
                     <ul class="nav nav-tabs mb-3">
-                        <li class="nav-item" v-for="t in [['yillik','Yıllık Özet'],['segment','Segment'],['model','Araç Modeli'],['gider','Gider Dağılımı'],['plaka','Plaka Detayı'],['ay','Ay Detayı']]" :key="t[0]">
+                        <li class="nav-item" v-for="t in [['yillik','Yıllık Özet'],['segment','Segment'],['musteri','Müşteri'],['model','Araç Modeli'],['gider','Gider Dağılımı'],['plaka','Plaka Detayı'],['ay','Ay Detayı']]" :key="t[0]">
                             <a href="#" class="nav-link" :class="{active: detailTab === t[0]}" @click.prevent="detailTab = t[0]">{{ t[1] }}</a></li>
                     </ul>
                     <div class="small text-muted mb-2"><i class="bi bi-arrow-down-up"></i> Sütun başlığına tıklayınca büyükten küçüğe, tekrar tıklayınca küçükten büyüğe sıralanır.</div>
                     <div class="card shadow-sm border-0">
                         <div class="table-responsive" v-if="detailTab === 'yillik'"><sort-table :key="'t-yillik'" v-bind="detailTables.yillik"></sort-table></div>
                         <div class="table-responsive" v-if="detailTab === 'segment'"><sort-table :key="'t-seg'" v-bind="detailTables.segment"></sort-table></div>
+                        <div v-if="detailTab === 'musteri'">
+                            <div class="table-responsive" v-if="hasCustomers"><sort-table :key="'t-mus'" v-bind="detailTables.musteri"></sort-table></div>
+                            <div class="p-4 text-center text-muted" v-else><i class="bi bi-people fs-3 d-block mb-2"></i>Henüz tarihçeye eklenen müşteri bilgisi yoktur. Tarihçe dosyanıza <b>Müşteri</b> sütunu ekleyip yeniden yükleyin.</div>
+                            <div class="p-2 small text-muted" v-if="hasCustomers">Gelir müşterinin dosyalarından, müşterinin kendi günlük tutarıyla hesaplanır. Araç ve personel gideri her araçta müşterinin kiralama günü payıyla dağıtılır. "Doluluğa Katkı": müşteriye çalışılan gün ÷ filodaki toplam araç günü; tüm müşterilerin toplamı filo doluluk oranıdır. Kârlılık = net ÷ gelir.</div>
+                        </div>
                         <div class="table-responsive" v-if="detailTab === 'model'"><sort-table :key="'t-model'" v-bind="detailTables.model"></sort-table></div>
                         <div v-if="detailTab === 'gider'" class="row g-0">
                             <div class="col-lg-7 table-responsive"><sort-table :key="'t-gi'" v-bind="detailTables.giderItems"></sort-table></div>
@@ -667,7 +771,7 @@
                         </div>
                         <div v-if="detailTab === 'ay'">
                             <div class="table-responsive"><sort-table :key="'t-ay'" v-bind="detailTables.ay"></sort-table></div>
-                            <div class="p-2 small text-muted">Talep, karşılanan ve dosya geliri dosyanın teslim ayına yazılır; dolu gün ve doluluk ise kiralamanın takvimde gerçekten geçtiği aya göre hesaplanır (ay sonuna taşan kiralama iki aya bölünür). {{ filters.year === 'all' ? 'Yıl: Tümü iken her ay, tüm tahminleme yıllarındaki aynı ayın toplamıdır.' : filters.year + ' yılı gösteriliyor.' }} Giderler (araç + personel) yıllık tutarın ayın gün sayısı kadarıdır; araç satış geliri dahil değildir. Kümülatif net, aylar sırasıyla toplanır (sıralama değişse de takvim sırasına göre hesaplanır).</div>
+                            <div class="p-2 small text-muted">Talep, karşılanan ve dosya geliri dosyanın teslim ayına yazılır; dolu gün ve doluluk ise kiralamanın takvimde gerçekten geçtiği aya göre hesaplanır (ay sonuna taşan kiralama iki aya bölünür). {{ !filters.year.length ? 'Yıl: Tümü iken her ay, tüm tahminleme yıllarındaki aynı ayın toplamıdır.' : filters.year.join(', ') + ' yılları toplamı gösteriliyor.' }} Giderler (araç + personel) yıllık tutarın ayın gün sayısı kadarıdır; araç satış geliri dahil değildir. Kümülatif net, aylar sırasıyla toplanır (sıralama değişse de takvim sırasına göre hesaplanır).</div>
                         </div>
                     </div>
                 </div>
@@ -722,14 +826,11 @@
                 </div>
                 <template v-else>
                     <div class="card shadow-sm border-0 mb-3"><div class="card-body py-2 d-flex gap-3 align-items-end flex-wrap">
-                        <div><label class="small text-muted">Yıl</label>
-                            <select class="form-select form-select-sm" v-model="filters.year"><option value="all">Tümü</option><option v-for="y in years" :key="y" :value="y">{{ y }}</option></select></div>
-                        <div><label class="small text-muted">Ay</label>
-                            <select class="form-select form-select-sm" v-model="filters.month"><option value="all">Tümü</option><option v-for="(m, i) in months" :key="i" :value="i">{{ m }}</option></select></div>
-                        <div><label class="small text-muted">Segment</label>
-                            <select class="form-select form-select-sm" v-model="filters.seg"><option value="all">Tümü</option><option v-for="s in segments" :key="s" :value="s">{{ s }} Segmenti</option></select></div>
-                        <div><label class="small text-muted">Marka Model</label>
-                            <select class="form-select form-select-sm" v-model="filters.vid"><option value="all">Tümü</option><option v-for="v in brandOptions" :key="v.id" :value="v.id">{{ v.markaModel }}</option></select></div>
+                        <div><label class="small text-muted">Yıl</label><multi-select v-model="filters.year" :options="filterOpts.year" width="120px"></multi-select></div>
+                        <div><label class="small text-muted">Ay</label><multi-select v-model="filters.month" :options="filterOpts.month" width="140px"></multi-select></div>
+                        <div><label class="small text-muted">Segment</label><multi-select v-model="filters.seg" :options="filterOpts.seg" width="140px"></multi-select></div>
+                        <div><label class="small text-muted">Marka Model</label><multi-select v-model="filters.vid" :options="filterOpts.vid" width="180px" :search="filterOpts.vid.length > 8"></multi-select></div>
+                        <div><label class="small text-muted">Müşteri</label><multi-select v-model="filters.cust" :options="filterOpts.cust" width="200px" search :placeholder="hasCustomers ? 'Tümü' : 'Müşteri bilgisi yok'"></multi-select></div>
                         <div><button class="btn btn-sm btn-outline-secondary" :disabled="!filtersActive" @click="clearFilters"><i class="bi bi-funnel"></i> Filtreleri Temizle</button></div>
                         <div class="small text-muted ms-auto">Filtreler simülatörle ortaktır. Senaryo: <b>{{ settings.sim.target === 'manual' ? 'Manuel adet' : (settings.sim.target === 'best' ? 'En kârlı filo' : '%' + settings.sim.target + ' karşılama') }}</b>{{ settings.sim.up ? ' · üst segment açık' : '' }}{{ settings.sim.down ? ' · alt segment açık' : '' }}</div>
                     </div></div>
@@ -768,7 +869,7 @@
                             </div>
                             <select class="form-select form-select-sm w-auto" v-if="bl.sens" v-model.number="sensP" title="Değişim oranı">
                                 <option :value="5">±%5</option><option :value="10">±%10</option><option :value="20">±%20</option></select>
-                            <select class="form-select form-select-sm w-auto" v-if="bl.segSelect" :value="curveSeg" @change="reportSeg = $event.target.value" :disabled="filters.seg !== 'all'" title="Segment">
+                            <select class="form-select form-select-sm w-auto" v-if="bl.segSelect" :value="curveSeg" @change="reportSeg = $event.target.value" :disabled="filters.seg.length === 1" title="Segment">
                                 <option v-for="s in curveSegs" :key="s" :value="s">{{ s }} Segmenti</option></select>
                         </div>
                         <div class="an-insight" v-if="bl.insight"><i class="bi bi-lightbulb-fill me-2"></i>{{ bl.insight }}</div>
@@ -796,8 +897,8 @@
                         <div class="card-body py-2 d-flex gap-2 flex-wrap align-items-center border-bottom">
                             <select class="form-select form-select-sm w-auto" v-model="ds.status" v-if="ds.type === 'dosya'">
                                 <option value="all">Tüm durumlar</option><option value="own">Kendi segmenti</option><option value="up">Üst segment</option><option value="down">Alt segment</option><option value="missed">Karşılanamadı</option></select>
-                            <input class="form-control form-control-sm" style="max-width:260px" v-model="ds.search" :placeholder="ds.type === 'dosya' ? 'Dosya no, plaka veya araç ara...' : 'Plaka veya araç ara...'">
-                            <span class="small text-muted">{{ formatCurrency(dsRows.length) }} satır · Yıl, ay, segment ve marka filtreleri uygulanır</span>
+                            <input class="form-control form-control-sm" style="max-width:260px" v-model="ds.search" :placeholder="ds.type === 'dosya' ? 'Dosya no, müşteri, plaka veya araç ara...' : 'Plaka veya araç ara...'">
+                            <span class="small text-muted">{{ formatCurrency(dsRows.length) }} satır · Yıl, ay, segment, marka ve müşteri filtreleri uygulanır</span>
                             <button class="btn btn-sm btn-outline-success ms-auto" @click="exportDataset" :disabled="!dsRows.length"><i class="bi bi-file-earmark-excel"></i> Excel'e Aktar</button>
                         </div>
                         <div class="table-responsive" style="max-height:520px">

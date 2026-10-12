@@ -29,6 +29,10 @@
     function normSegment(s) {
         return String(s === undefined || s === null ? '' : s).trim().toUpperCase().replace(/\s*SEGMENT.*$/, '').replace(/\s+/g, '');
     }
+    /* Müşteri adı: baştaki/sondaki boşluklar atılır, aradaki çoklu boşluk teke iner */
+    function normCustomer(s) {
+        return String(s === undefined || s === null ? '' : s).replace(/\s+/g, ' ').trim();
+    }
     function parseCSV(text) {
         text = text.replace(/^﻿/, '');
         const first = text.split(/\r?\n/)[0] || '';
@@ -48,13 +52,17 @@
         row.push(cur); if (row.some(x => x !== '')) rows.push(row);
         return rows;
     }
-    /* rows: [[no, segment, teslimat, iade], ...] -> {records, bad} */
+    /* rows: [[no, segment, teslimat, iade, müşteri], ...] -> {records, bad}
+       Aynı müşteri farklı yazılmışsa (büyük/küçük harf, fazla boşluk) ilk görülen yazılışla tek müşteri olarak kaydedilir. */
     function rowsToRecords(rows) {
-        const records = []; let bad = 0;
+        const records = [], canon = new Map(); let bad = 0;
         rows.forEach(r => {
             const s = parseDate(r[2]), e = parseDate(r[3]), seg = normSegment(r[1]);
             if (!seg || s === null || e === null || e < s) { bad++; return; }
-            records.push({ dosyaNo: String(r[0] === undefined ? '' : r[0]).trim(), segment: seg, teslimat: formatDate(s), iade: formatDate(e) });
+            const rec = { dosyaNo: String(r[0] === undefined ? '' : r[0]).trim(), segment: seg, teslimat: formatDate(s), iade: formatDate(e) };
+            const c = normCustomer(r[4]);
+            if (c) { const k = c.toLocaleUpperCase('tr-TR'); if (!canon.has(k)) canon.set(k, c); rec.musteri = canon.get(k); }
+            records.push(rec);
         });
         return { records, bad };
     }
@@ -64,20 +72,48 @@
         return [['Dosya Numarası', /dosya/], ['Segment', /segment/], ['Araç Teslimat Tarihi', /teslim/], ['Araç İade Tarihi', /iade/]]
             .filter(([, re]) => !head.some(h => re.test(h))).map(([n]) => n);
     }
-    /* Başlık satırı olan tablo (dizi dizisi) -> 4 kolonlu satırlar */
+    const CUSTOMER_RE = /m[üu][şs]ter[iı]|customer|firma/;
+    /* Tabloda Müşteri sütunu var mı (isteğe bağlı sütun) */
+    function hasCustomerColumn(table) {
+        const head = (table[0] || []).map(x => String(x === undefined ? '' : x).toLocaleLowerCase('tr-TR'));
+        return head.some(h => CUSTOMER_RE.test(h));
+    }
+    /* Başlık satırı olan tablo (dizi dizisi) -> 5 kolonlu satırlar (no, segment, teslimat, iade, müşteri) */
     function tableToRows(table) {
         if (!table.length) return [];
         const low = x => String(x === undefined ? '' : x).toLocaleLowerCase('tr-TR');
         const head = table[0].map(low);
         const find = re => head.findIndex(h => re.test(h));
-        let idx = [find(/dosya/), find(/segment/), find(/teslim/), find(/iade/)];
+        let idx = [find(/dosya/), find(/segment/), find(/teslim/), find(/iade/), find(CUSTOMER_RE)];
         let body = table.slice(1);
-        if (idx.some(i => i < 0)) { // başlık yoksa sırayla 4 kolon varsay
-            idx = [0, 1, 2, 3];
+        if (idx.slice(0, 4).some(i => i < 0)) { // başlık yoksa sırayla kolon varsay (5. kolon müşteri)
+            idx = [0, 1, 2, 3, 4];
             if (parseDate(table[0][2]) !== null) body = table;
         }
-        return body.map(r => idx.map(i => r[i]));
+        return body.map(r => idx.map(i => (i < 0 ? '' : r[i])));
     }
+
+    /* ---------- Günlük tutarlar ----------
+       Müşteriye özel tutar girilmişse o kullanılır; girilmemişse varsayılan (müşterisiz) segment tutarı.
+       settings.musteriTutar = { 'Müşteri Adı': { gunluk: {seg: {yıl: tutar}}, tedarikci: {seg: {yıl: tutar}} } } */
+    function makeRates(settings) {
+        const mt = (settings && settings.musteriTutar) || {}, gt = (settings && settings.gunlukTutar) || {}, ts = (settings && settings.tedarikciTutar) || {};
+        const cache = new Map();
+        const pick = (kind, def, c, sg, y) => {
+            const k = kind + '\t' + c + '\t' + sg + '\t' + y;
+            let v = cache.get(k);
+            if (v !== undefined) return v;
+            const o = c ? mt[c] : null, t = o && o[kind] && o[kind][sg] ? o[kind][sg][y] : null;
+            v = filled(t) ? num(t) : num((def[sg] || {})[y]);
+            cache.set(k, v); return v;
+        };
+        const own = (c, sg, y) => { const o = c ? mt[c] : null, t = o && o.gunluk && o.gunluk[sg] ? o.gunluk[sg][y] : null; return filled(t); };
+        const ownSup = (c, sg, y) => { const o = c ? mt[c] : null, t = o && o.tedarikci && o.tedarikci[sg] ? o.tedarikci[sg][y] : null; return filled(t); };
+        return { rate: (c, sg, y) => pick('gunluk', gt, c || '', sg, y), sup: (c, sg, y) => pick('tedarikci', ts, c || '', sg, y), own, ownSup };
+    }
+    const KEY_SEP = '\t';
+    const priceKey = (sg, c) => sg + KEY_SEP + (c || '');
+    const splitKey = k => { const i = k.indexOf(KEY_SEP); return i < 0 ? [k, ''] : [k.slice(0, i), k.slice(i + 1)]; };
 
     /* ---------- Maliyet ---------- */
     function sortedYears(settings) { return [...settings.enflasyonYillari].map(Number).sort((a, b) => a - b); }
@@ -252,34 +288,38 @@
         const pools = {}, byUnit = {};
         units.forEach(u => {
             const st = { id: u.id, seg: u.seg, freeAt: -Infinity, iv: [], days: 0, files: 0, price: {}, cross: {}, occ: Array(12).fill(0),
-                m: Array.from({ length: 12 }, () => ({ days: 0, files: 0, price: {} })) };
+                m: Array.from({ length: 12 }, () => ({ days: 0, files: 0, price: {}, cf: {} })) };
             byUnit[u.id] = st; (pools[u.seg] = pools[u.seg] || []).push(st);
         });
         const sorted = sortFiles(files);
         const segStats = {};
         const blank = () => ({ total: 0, handled: 0, own: 0, up: 0, down: 0, days: 0 });
-        const stat = seg => segStats[seg] || (segStats[seg] = { ...blank(), m: Array.from({ length: 12 }, blank) });
+        const stat = seg => segStats[seg] || (segStats[seg] = { ...blank(), m: Array.from({ length: 12 }, blank), c: {} });
+        const statC = (seg, c) => { const s = stat(seg); return s.c[c] || (s.c[c] = { ...blank(), m: Array.from({ length: 12 }, blank) }); };
         let minS = Infinity, maxE = -Infinity;
         const assign = sorted.map(f => {
             if (f.s < minS) minS = f.s; if (f.e > maxE) maxE = f.e;
-            const a = { no: f.no, seg: f.seg, s: f.s, e: f.e, fr: freeAtOf(f.e, cutHour), mi: new Date(f.s).getMonth(), days: rentDays(f.s, f.e), unit: null, given: null, kind: null };
+            const a = { no: f.no, seg: f.seg, c: f.c || '', s: f.s, e: f.e, fr: freeAtOf(f.e, cutHour), mi: new Date(f.s).getMonth(), days: rentDays(f.s, f.e), unit: null, given: null, kind: null };
             const ss = stat(f.seg); ss.total++; ss.m[a.mi].total++;
+            const sc = statC(f.seg, a.c); sc.total++; sc.m[a.mi].total++;
             return a;
         });
         const book = (a, st, kind) => {
-            const ss = stat(a.seg), sm = ss.m[a.mi], rd = a.days, priceSeg = kind === 'down' ? st.seg : a.seg;
+            const ss = stat(a.seg), sm = ss.m[a.mi], rd = a.days, pk = priceKey(kind === 'down' ? st.seg : a.seg, a.c);
+            const sc = statC(a.seg, a.c), scm = sc.m[a.mi];
             a.unit = st.id; a.given = st.seg; a.kind = kind;
             ss.handled++; ss.days += rd; ss[kind]++; sm.handled++; sm.days += rd; sm[kind]++;
-            st.files++; st.days += rd; st.price[priceSeg] = (st.price[priceSeg] || 0) + rd;
+            sc.handled++; sc.days += rd; sc[kind]++; scm.handled++; scm.days += rd; scm[kind]++;
+            st.files++; st.days += rd; st.price[pk] = (st.price[pk] || 0) + rd;
             // Doluluk için kiralama günleri takvimdeki gerçek aylarına bölüştürülür (ay sonuna taşan kiralama)
             if (a.e > a.s) {
                 let t = a.s; const tot = a.e - a.s;
                 while (t < a.e) { const d = new Date(t), nx = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime(), e2 = Math.min(a.e, nx); st.occ[d.getMonth()] += rd * (e2 - t) / tot; t = e2; }
             } else st.occ[a.mi] += rd;
-            const bm = st.m[a.mi]; bm.files++; bm.days += rd; bm.price[priceSeg] = (bm.price[priceSeg] || 0) + rd;
+            const bm = st.m[a.mi]; bm.files++; bm.days += rd; bm.price[pk] = (bm.price[pk] || 0) + rd; bm.cf[a.c] = (bm.cf[a.c] || 0) + 1;
             if (kind !== 'own') {
-                const key = kind + '|' + a.seg + '|' + st.seg;
-                const c = st.cross[key] || (st.cross[key] = { kind, req: a.seg, given: st.seg, files: 0, days: 0, m: Array.from({ length: 12 }, () => ({ files: 0, days: 0 })) });
+                const key = kind + '|' + a.seg + '|' + st.seg + '|' + a.c;
+                const c = st.cross[key] || (st.cross[key] = { kind, req: a.seg, given: st.seg, c: a.c, files: 0, days: 0, m: Array.from({ length: 12 }, () => ({ files: 0, days: 0 })) });
                 c.files++; c.days += rd; c.m[a.mi].files++; c.m[a.mi].days += rd;
             }
         };
@@ -383,12 +423,26 @@
         const span = files.length ? Math.max(1, (maxE - minS) / DAY) : 0;
         const period = span >= 355 ? YEAR_DAYS : Math.max(1, Math.round(span));
         const scale = span > 370 ? YEAR_DAYS / span : 1;
-        const rate = (seg, y) => num(((settings.gunlukTutar || {})[seg] || {})[y]);
-        const sup = (seg, y) => num(((settings.tedarikciTutar || {})[seg] || {})[y]);
-
+        const RT = makeRates(settings);
         // Segment başına modeller: aracın yıllık ortalama net maliyetine göre ucuzdan pahalıya
-        const bySeg = {};
-        files.forEach(f => { (bySeg[f.seg] = bySeg[f.seg] || []).push(f); });
+        const bySeg = {}, segW = {}; // segW: segment → müşteri → kiralama günü (ortalama tutar ağırlığı)
+        files.forEach(f => {
+            (bySeg[f.seg] = bySeg[f.seg] || []).push(f);
+            const w = segW[f.seg] || (segW[f.seg] = {}), c = f.c || ''; w[c] = (w[c] || 0) + rentDays(f.s, f.e);
+        });
+        /* Filo eğrisi segment düzeyinde çalışır: müşteri tutarları, o segmentteki talebin müşteri dağılımıyla (kiralama günü) ağırlıklandırılır */
+        const segAvg = {};
+        const avgOf = (seg, y) => {
+            const k = seg + KEY_SEP + y; if (segAvg[k]) return segAvg[k];
+            const w = segW[seg] || { '': 1 };
+            let tw = 0, r = 0, m = 0, sw = 0, sv = 0;
+            Object.keys(w).forEach(c => {
+                const x = w[c], rr = RT.rate(c, seg, y), ss = RT.sup(c, seg, y);
+                tw += x; r += x * rr; if (ss > 0) { m += x * (rr - ss); sw += x; sv += x * ss; }
+            });
+            return (segAvg[k] = { rate: tw ? r / tw : 0, mg: tw ? m / tw : 0, sup: sw ? sv / sw : 0, hasSup: sw > 0 });
+        };
+        const rate = (seg, y) => avgOf(seg, y).rate;
         const segModels = {};
         complete.forEach(v => { (segModels[v.segment] = segModels[v.segment] || []).push(v); });
         Object.values(segModels).forEach(list => list.sort((a, b) => vehicleCosts[a.id].annualNet - vehicleCosts[b.id].annualNet || vIndex(a) - vIndex(b)));
@@ -413,7 +467,7 @@
             const comp = N => (N <= E0 ? existing.slice(0, N) : [...Array(k0 + N - E0).fill(cheapest), ...rest]);
             // Tedarikçi: kendi aracımız olmayan dosya tedarikçiye verilir; marj = müşteri tutarı − tedarikçi tutarı
             // (tedarikçi tutarı girilmemiş yılda dosya kaybedilmiş sayılır, marj 0)
-            const mg = y => (sup(seg, y) > 0 ? rate(seg, y) - sup(seg, y) : 0);
+            const mg = y => avgOf(seg, y).mg;
             const rs = {}, ms = {}; // aracın ömrü boyunca günlük tutar ve tedarikçi marjı toplamları
             models.forEach(v => { const L = vehicleCosts[v.id].life; rs[v.id] = L.reduce((x, y) => x + rate(seg, y), 0); ms[v.id] = L.reduce((x, y) => x + mg(y), 0); });
             const wk = k => Math.min(period, Math.round((curve[k] ? curve[k].days : 0) * scale));
@@ -440,7 +494,7 @@
                 if (N > 0) cumF += (curve[N - 1] || { files: 0 }).files;
                 points.push({ n: N, coverage: total ? cumF / total * 100 : 0, handled: cumF, net: sNet ? sNet[N] : null, total: sTot ? sTot[N] + base : null });
             }
-            const hasSup = years.some(y => sup(seg, y) > 0);
+            const hasSup = years.some(y => avgOf(seg, y).hasSup);
             // +1 araç etkisi: bu modelden bir araç daha eklenirse (ucuzdan pahalıya sıraya girer) şirket neti ne kadar değişir
             if (cheapest) {
                 const baseTot = existing.reduce((a, v, k) => a + fTot(k, v), 0);
@@ -473,9 +527,10 @@
         const sim = simulate(files, units, cutHour, { up: !!simOpt.up, down: !!simOpt.down });
 
         const missingRates = new Set(), unsold = new Set();
-        const revOf = (price, y) => Object.keys(price).reduce((a, sg) => {
-            const r = rate(sg, y); if (!r) missingRates.add(`${sg} / ${y}`);
-            return a + price[sg] * scale * r;
+        const revOf = (price, y) => Object.keys(price).reduce((a, k) => {
+            const [sg, c] = splitKey(k), r = RT.rate(c, sg, y);
+            if (!r) missingRates.add(c ? `${c} · ${sg} / ${y}` : `${sg} / ${y}`);
+            return a + price[k] * scale * r;
         }, 0);
         const plates = units.map(u => {
             const st = sim.byUnit[u.id], ct = vehicleCosts[u.v.id];
@@ -483,15 +538,14 @@
             const byYear = {}, soldYear = ct.sold ? ct.life[ct.life.length - 1] : null;
             if (soldYear === null) unsold.add(u.v.markaModel);
             ct.life.forEach(y => {
-                if (!rate(u.seg, y)) missingRates.add(`${u.seg} / ${y}`);
                 const revenue = revOf(st.price, y) * cap, sale = y === soldYear ? num(u.v.satisTutari) : 0;
                 const op = ct.opTotals[y], buy = ct.buyTotals[y], int = ct.intTotals[y], cost = op + buy + int;
                 const mRev = st.m.map(m => revOf(m.price, y));
                 byYear[y] = { work, idle, revenue, sale, op, buy, int, cost, pers: 0, persShare: 0, net: revenue + sale - cost, mRev };
             });
             const months = st.m.map((m, i) => ({ work: Math.round(m.days * scale), occ: st.occ[i] * scale, files: m.files * scale }));
-            return { id: u.id, plate: u.plate, seg: u.seg, vid: u.v.id, model: u.v.markaModel, life: ct.life, work, idle, files: st.files * scale,
-                months, byYear, cross: Object.values(st.cross), price: st.price };
+            return { id: u.id, plate: u.plate, seg: u.seg, vid: u.v.id, model: u.v.markaModel, life: ct.life, work, idle, cap, files: st.files * scale,
+                months, byYear, cross: Object.values(st.cross), price: st.price, mPrice: st.m.map(m => m.price), mCf: st.m.map(m => m.cf) };
         });
         // Personel gideri: filo geneli sabit gider; o yıl aktif araçlara, aldıkları dosya sayısı oranında dağıtılır
         const pers = personnelTable(settings, years);
@@ -504,11 +558,13 @@
                 r.persShare = share; r.pers = pers.totals[y] * share; r.net -= r.pers;
             });
         });
-        return { years, plates, vehicleCosts, pers, sim, curves, counts, noModel, incomplete, segModels, marginal,
+        const customers = [...new Set(files.map(f => f.c || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'tr'));
+        return { years, plates, vehicleCosts, pers, sim, curves, counts, noModel, incomplete, segModels, marginal, rates: RT, segAvg: avgOf, customers,
             missingRates: [...missingRates], unsold: [...unsold], period, scale, dataYear: sim.dataYear, target };
     }
 
-    const api = { SEGMENTS, FUELS, DEFAULT_HEADERS, parseDate, formatDate, normSegment, parseCSV, rowsToRecords, tableToRows, missingHeaders,
+    const api = { SEGMENTS, FUELS, DEFAULT_HEADERS, parseDate, formatDate, normSegment, normCustomer, parseCSV, rowsToRecords, tableToRows, missingHeaders, hasCustomerColumn,
+        makeRates, priceKey, splitKey,
         sortedYears, inflationFactors, loanSchedule, costTable, COST_TYPES, costType, personnelTable, missingFields, isVehicleComplete, simulate, fleetCurve, dailyPeaks,
         freeAtOf, buildReport, rentDays, adjustFiles };
     if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;

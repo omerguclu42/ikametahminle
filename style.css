@@ -352,3 +352,30 @@ tr.cursor-pointer:hover { background: #fff4ec; }
 .ds-table th, .ds-table td, .ds-table .text-end { text-align: center !important; vertical-align: middle; }
 .an-table th, .an-table td { padding-left: 6px; padding-right: 6px; }
 .an-table thead th { white-space: normal; line-height: 1.2; }
+
+/* Çoktan seçmeli filtre listesi */
+.msel { position: relative; }
+.msel-btn { text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
+.msel-btn.msel-on { border-color: #ff6600; background-color: #fff4ec; color: #c2410c; font-weight: 600; }
+.msel-menu { position: absolute; z-index: 1060; top: calc(100% + 4px); left: 0; min-width: 100%; width: max-content; max-width: 340px; background: #fff;
+    border: 1px solid #dee2e6; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 6px; }
+.msel-list { max-height: 280px; overflow-y: auto; }
+.msel-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: .86rem; margin: 0; }
+.msel-item:hover { background: #f8f9fa; }
+.msel-item.on { background: #fff4ec; }
+.msel-item .form-check-input { margin: 0; flex-shrink: 0; }
+.msel-item .form-check-input:checked { background-color: #ff6600; border-color: #ff6600; }
+.msel-l { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msel-only { font-size: .72rem; color: #adb5bd; text-decoration: none; visibility: hidden; }
+.msel-item:hover .msel-only { visibility: visible; }
+.msel-only:hover { color: #ff6600; }
+.msel-foot { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid #f1f3f5; margin-top: 4px; padding: 6px 4px 2px; font-size: .8rem; }
+.msel-foot a { color: #ff6600; text-decoration: none; }
+.msel-foot a.disabled { color: #adb5bd; pointer-events: none; }
+
+/* Günlük Tutar: müşterinin talep ettiği segmentler */
+.rate-table tr.seg-used th { color: #c2410c; }
+.rate-table tr.seg-used { background: #fffaf5; }
+.bg-orange-soft { background: #ffe8d6; color: #c2410c; font-weight: 600; }
+@media print { .msel-menu { display: none !important; } }
+.filter-help { line-height: 1.35; margin-top: -4px; }

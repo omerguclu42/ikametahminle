@@ -10,7 +10,23 @@ const PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="150"><rect width="300" height="150" fill="#f1f3f5"/><text x="150" y="82" font-family="Arial" font-size="14" fill="#adb5bd" text-anchor="middle">Görsel yok</text></svg>');
 const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 const TARGETS = [50, 60, 70, 80, 90, 95, 100];
-const EMPTY_FILTERS = () => ({ year: 'all', month: 'all', seg: 'all', vid: 'all' });
+/* Filtreler çoktan seçmelidir: boş dizi = Tümü */
+const EMPTY_FILTERS = () => ({ year: [], month: [], seg: [], vid: [], cust: [] });
+const NO_CUST = ''; // müşteri bilgisi olmayan dosyalar
+const NO_CUST_LABEL = 'Müşterisi belirtilmemiş';
+const STAT_KEYS = ['total', 'handled', 'own', 'up', 'down', 'days'];
+/* Eski tek seçimli filtreleri ('all' / tek değer) diziye çevirir */
+function normFilters(f) {
+    const d = EMPTY_FILTERS(); f = f || {};
+    Object.keys(d).forEach(k => {
+        const v = f[k];
+        if (Array.isArray(v)) d[k] = [...v];
+        else if (v !== undefined && v !== null && v !== 'all') d[k] = [v];
+        if (k === 'year' || k === 'month') d[k] = d[k].map(Number).filter(x => !isNaN(x));
+        else if (k !== 'cust') d[k] = d[k].map(String);
+    });
+    return d;
+}
 const DEFAULT_SIM = () => ({ target: 'manual', up: false, down: false, preset: 'manual', growth: 0 });
 const GROWTHS = [-50, -40, -30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30, 40, 50];
 
@@ -44,6 +60,7 @@ function defaultSettings() {
         },
         gunlukTutar: {},
         tedarikciTutar: {},
+        musteriTutar: {},
         sim: DEFAULT_SIM(),
         scenarios: []
     };
@@ -80,12 +97,22 @@ function normalizeSettings(s) {
         FUELS.forEach(f => { if (s.yakitFiyatlari[f][y] === undefined) s.yakitFiyatlari[f][y] = 0; });
         SEGMENTS.forEach(sg => { if (s.gunlukTutar[sg][y] === undefined) s.gunlukTutar[sg][y] = null; if (s.tedarikciTutar[sg][y] === undefined) s.tedarikciTutar[sg][y] = null; });
     });
+    // Müşteri bazlı günlük tutarlar: { müşteri: { gunluk: {seg: {yıl}}, tedarikci: {seg: {yıl}} } }
+    s.musteriTutar = s.musteriTutar && typeof s.musteriTutar === 'object' && !Array.isArray(s.musteriTutar) ? s.musteriTutar : {};
+    Object.keys(s.musteriTutar).forEach(c => fillCustRates(s.musteriTutar[c] = s.musteriTutar[c] || {}, s.enflasyonYillari));
     s.sim = { ...DEFAULT_SIM(), ...(s.sim || {}) };
     if (s.sim.target !== 'manual' && s.sim.target !== 'best') s.sim.target = TARGETS.includes(Number(s.sim.target)) ? Number(s.sim.target) : 'manual';
     s.sim.up = !!s.sim.up; s.sim.down = !!s.sim.down; s.sim.growth = GROWTHS.includes(Number(s.sim.growth)) ? Number(s.sim.growth) : 0;
     if (s.sim.preset !== 'manual' && s.sim.preset !== 'best' && !TARGETS.includes(Number(s.sim.preset))) s.sim.preset = 'manual';
     s.scenarios = Array.isArray(s.scenarios) ? s.scenarios.filter(x => x && x.ad) : [];
     return s;
+}
+function fillCustRates(o, years) {
+    ['gunluk', 'tedarikci'].forEach(k => {
+        o[k] = o[k] || {};
+        SEGMENTS.forEach(sg => { o[k][sg] = o[k][sg] || {}; years.forEach(y => { if (o[k][sg][y] === undefined) o[k][sg][y] = null; }); });
+    });
+    return o;
 }
 function normalizeVehicle(v) {
     v.giderler = v.giderler || {};
@@ -161,6 +188,57 @@ const NumInput = {
     </div>`
 };
 
+/* ---- Çoktan seçmeli açılır liste (filtreler): boş seçim = Tümü ---- */
+const MultiSelect = {
+    props: { modelValue: { type: Array, default: () => [] }, options: { type: Array, default: () => [] }, placeholder: { type: String, default: 'Tümü' }, search: Boolean, width: { type: String, default: '160px' } },
+    emits: ['update:modelValue'],
+    data() { return { open: false, q: '' }; },
+    computed: {
+        sel() { return new Set(this.modelValue.map(String)); },
+        shown() { const q = this.q.trim().toLocaleLowerCase('tr'); return q ? this.options.filter(o => String(o.l).toLocaleLowerCase('tr').includes(q)) : this.options; },
+        label() {
+            const n = this.modelValue.length; if (!n) return this.placeholder;
+            const ls = this.options.filter(o => this.sel.has(String(o.v))).map(o => o.s || o.l);
+            return n <= 2 && ls.length === n ? ls.join(', ') : n + ' seçili';
+        }
+    },
+    watch: { open(o) { if (!o) this.q = ''; } },
+    methods: {
+        toggle(o) {
+            const k = String(o.v), order = new Map(this.options.map((x, i) => [String(x.v), i]));
+            const arr = this.sel.has(k) ? this.modelValue.filter(x => String(x) !== k) : [...this.modelValue, o.v];
+            arr.sort((a, b) => (order.has(String(a)) ? order.get(String(a)) : 1e9) - (order.has(String(b)) ? order.get(String(b)) : 1e9));
+            this.$emit('update:modelValue', arr);
+        },
+        only(o) { this.$emit('update:modelValue', [o.v]); },
+        selectShown() { const set = new Set(this.modelValue.map(String)); const add = this.shown.filter(o => !set.has(String(o.v))).map(o => o.v); this.$emit('update:modelValue', [...this.modelValue, ...add]); },
+        clear() { this.$emit('update:modelValue', []); },
+        onDoc(e) { if (this.open && this.$el && !this.$el.contains(e.target)) this.open = false; }
+    },
+    mounted() { document.addEventListener('mousedown', this.onDoc); },
+    beforeUnmount() { document.removeEventListener('mousedown', this.onDoc); },
+    template: `
+    <div class="msel" :class="{open}">
+        <button type="button" class="form-select form-select-sm msel-btn" :class="{'msel-on': modelValue.length}" :style="{width}" @click="open = !open" :title="label">{{ label }}</button>
+        <div class="msel-menu" v-if="open">
+            <input v-if="search" class="form-control form-control-sm mb-1" v-model="q" placeholder="Ara...">
+            <div class="msel-list">
+                <label class="msel-item" v-for="o in shown" :key="String(o.v)" :class="{on: sel.has(String(o.v))}">
+                    <input type="checkbox" class="form-check-input" :checked="sel.has(String(o.v))" @change="toggle(o)">
+                    <span class="msel-l">{{ o.l }}</span>
+                    <small v-if="o.n !== undefined" class="text-muted">{{ o.n }}</small>
+                    <a href="#" class="msel-only" @click.prevent="only(o)" title="Yalnızca bunu seç">yalnız</a>
+                </label>
+                <div v-if="!shown.length" class="small text-muted p-2">Sonuç yok</div>
+            </div>
+            <div class="msel-foot">
+                <a href="#" @click.prevent="selectShown">{{ q ? 'Görünenleri seç' : 'Hepsini seç' }}</a>
+                <a href="#" @click.prevent="clear" :class="{disabled: !modelValue.length}">Temizle (Tümü)</a>
+            </div>
+        </div>
+    </div>`
+};
+
 /* ---- Sıralanabilir tablo: başlığa tıkla → büyükten küçüğe, tekrar → küçükten büyüğe ---- */
 const SortTable = {
     props: { cols: Array, rows: Array, foot: Array, clickable: Boolean, limit: Number },
@@ -207,7 +285,7 @@ const PAGE_META = {
     yakitVeEnflasyon: ['Yakıt & Enflasyon', 'Tahminleme yıllarını, enflasyon oranlarını ve yakıt fiyatlarını girin.'],
     tarihce: ['Tarihçe (Dosyalar)', 'Simülasyonun dayandığı dosya teslim / iade verisini yükleyin.'],
     iadeSaati: ['İade Dönüş Saati', 'Geç iade edilen aracın ertesi güne kalacağı saat sınırını belirleyin.'],
-    gunlukTutar: ['Günlük Tutar', 'Segment ve yıla göre müşteriye yansıtılan ve tedarikçiye ödenen günlük tutarlar.'],
+    gunlukTutar: ['Günlük Tutar', 'Müşteri, segment ve yıla göre müşteriye yansıtılan ve tedarikçiye ödenen günlük tutarlar.'],
     rehber: ['Çalışma Rehberi', 'Her sayfanın başlıkları ne işe yarar, hesaplar hangi mantıkla yapılır.']
 };
 const C = { orange: '#ff6600', orangeL: '#ffa94d', dark: '#343a40', grey: '#adb5bd', green: '#2b8a3e', red: '#e03131', blue: '#1c7ed6', purple: '#7048e8', amber: '#f59f00' };
@@ -260,6 +338,8 @@ const app = createApp({
 
             // Raporlama
             reportSeg: null,
+            // Günlük Tutar: seçili müşteri ve kopyalama kaynağı
+            gtCust: null, gtCopyFrom: '__default',
             sensP: 10, sensData: null, sensBusy: false, margData: {}, margBusy: false,
             ds: { type: 'dosya', status: 'all', search: '', page: 1, size: 50 }
         };
@@ -280,7 +360,54 @@ const app = createApp({
         allHeaders() { return [...DEFAULT_HEADERS, ...this.settings.giderTanimlari.map(h => h.ad)]; },
         fuelHeaders() { return this.settings.giderTanimlari.filter(h => h.tip === 'yakit').map(h => h.ad); },
         hdrByName() { const o = {}; this.settings.giderTanimlari.forEach(h => { o[h.ad] = h; }); return o; },
-        hasSupplier() { return SEGMENTS.some(sg => this.years.some(y => Number((this.settings.tedarikciTutar[sg] || {})[y]) > 0)); },
+        hasSupplier() {
+            const pos = o => SEGMENTS.some(sg => this.years.some(y => Number(((o || {})[sg] || {})[y]) > 0));
+            return pos(this.settings.tedarikciTutar) || Object.values(this.settings.musteriTutar || {}).some(m => pos(m.tedarikci));
+        },
+        /* Tarihçedeki müşteriler (tekrarsız): dosya sayısı ve segment dağılımıyla */
+        histCustomers() {
+            const map = new Map(); let none = 0;
+            this.historicalData.forEach(d => {
+                const c = d.musteri || NO_CUST; if (!c) { none++; return; }
+                const o = map.get(c) || { c, files: 0, segs: {} }; o.files++;
+                const sg = E.normSegment(d.segment); o.segs[sg] = (o.segs[sg] || 0) + 1; map.set(c, o);
+            });
+            return { list: [...map.values()].sort((a, b) => a.c.localeCompare(b.c, 'tr')), none };
+        },
+        hasCustomers() { return this.histCustomers.list.length > 0; },
+        /* Filtre ve tablolar için müşteri listesi; müşteri bilgisi olmayan dosya varsa "belirtilmemiş" de eklenir */
+        customerList() { const H = this.histCustomers; return H.list.length ? [...H.list.map(x => x.c), ...(H.none ? [NO_CUST] : [])] : []; },
+        filterOpts() {
+            const H = this.histCustomers;
+            return {
+                year: this.years.map(y => ({ v: y, l: String(y) })),
+                month: MONTHS.map((m, i) => ({ v: i, l: m, s: m.slice(0, 3) })),
+                seg: SEGMENTS.map(sg => ({ v: sg, l: sg + ' Segmenti', s: sg })),
+                vid: this.brandOptions.map(v => ({ v: String(v.id), l: v.markaModel })),
+                cust: [...H.list.map(x => ({ v: x.c, l: x.c, n: this.formatCurrency(x.files) })), ...(H.list.length && H.none ? [{ v: NO_CUST, l: NO_CUST_LABEL, n: this.formatCurrency(H.none) }] : [])]
+            };
+        },
+        /* Günlük Tutar sayfası: her müşterinin talep ettiği segment × yıl için kendi / tedarikçi tutarı girilmiş mi */
+        custRateStatus() {
+            const mt = this.settings.musteriTutar || {}, yrs = this.years, filled = x => x !== null && x !== undefined && x !== '';
+            const out = {};
+            this.histCustomers.list.forEach(o => {
+                const e = mt[o.c] || {}, segs = Object.keys(o.segs).filter(sg => SEGMENTS.includes(sg));
+                const miss = k => segs.filter(sg => yrs.some(y => !filled(((e[k] || {})[sg] || {})[y])));
+                const own = miss('gunluk'), sup = miss('tedarikci');
+                out[o.c] = { own, sup, ok: !own.length, supOk: !sup.length, segs };
+            });
+            return out;
+        },
+        custMissingOwn() { return this.histCustomers.list.filter(o => !this.custRateStatus[o.c].ok).map(o => o.c); },
+        custMissingSup() { return this.histCustomers.list.filter(o => !this.custRateStatus[o.c].supOk).map(o => o.c); },
+        custEntry() { return this.gtCust ? (this.settings.musteriTutar || {})[this.gtCust] || null : null; },
+        orphanRates() { const have = new Set(this.histCustomers.list.map(o => o.c)); return Object.keys(this.settings.musteriTutar || {}).filter(c => !have.has(c)); },
+        /* Gelir hesabında tutarı bulunamayan müşteri / segment / yıllar (kısaltılmış metin) */
+        missingRatesText() {
+            const L = this.report.missingRates; if (!L.length) return '';
+            const max = 12; return L.slice(0, max).join(', ') + (L.length > max ? ` ve ${L.length - max} kalem daha` : '');
+        },
         categories() { return [...new Set(this.hdrList.map(h => h.kategori).filter(Boolean))]; },
         sortedVehicles() {
             return [...this.vehicles].sort((a, b) => SEGMENTS.indexOf(a.segment) - SEGMENTS.indexOf(b.segment) || a.markaModel.localeCompare(b.markaModel, 'tr'));
@@ -295,7 +422,7 @@ const app = createApp({
             const out = [];
             this.historicalData.forEach(d => {
                 const s = E.parseDate(d.teslimat), e = E.parseDate(d.iade);
-                if (s !== null && e !== null) out.push({ no: d.dosyaNo, seg: E.normSegment(d.segment), s, e });
+                if (s !== null && e !== null) out.push({ no: d.dosyaNo, seg: E.normSegment(d.segment), s, e, c: d.musteri || NO_CUST });
             });
             return out;
         },
@@ -324,7 +451,8 @@ const app = createApp({
                     && (!this.fuelHeaders.length || (fuels.length ? fuels : FUELS).every(f => yrs.every(y => Number(s.yakitFiyatlari[f][y]) > 0))),
                 tarihce: this.historicalData.length > 0,
                 iadeSaati: true,
-                gunlukTutar: segs.length > 0 && segs.every(sg => yrs.every(y => Number((s.gunlukTutar[sg] || {})[y]) > 0))
+                gunlukTutar: this.hasCustomers ? !this.custMissingOwn.length
+                    : segs.length > 0 && segs.every(sg => yrs.every(y => Number((s.gunlukTutar[sg] || {})[y]) > 0))
             };
         },
 
@@ -339,9 +467,10 @@ const app = createApp({
         },
 
         brandOptions() {
-            return this.sortedVehicles.filter(v => (this.report.counts[v.id] || 0) > 0 && (this.filters.seg === 'all' || v.segment === this.filters.seg));
+            const sg = this.filters.seg;
+            return this.sortedVehicles.filter(v => (this.report.counts[v.id] || 0) > 0 && (!sg.length || sg.includes(v.segment)));
         },
-        filtersActive() { const f = this.filters; return f.year !== 'all' || f.month !== 'all' || f.seg !== 'all' || f.vid !== 'all'; },
+        filtersActive() { const f = this.filters; return Object.keys(f).some(k => f[k].length > 0); },
         activeScenarioId() {
             const cur = this.snapshot();
             const sc = this.settings.scenarios.find(s => !!s.sim.up === cur.sim.up && !!s.sim.down === cur.sim.down && (s.sim.target || 'manual') === 'manual' && (Number(s.sim.growth) || 0) === cur.sim.growth
@@ -360,36 +489,96 @@ const app = createApp({
         histRows() { const s = (this.histPage - 1) * this.histSize; return this.historicalData.slice(s, s + this.histSize); },
         pageButtons() { return this.pager(this.histPage, this.histPages); },
 
+        /* ---- Filtre bağlamı (çoktan seçmeli) ---- */
+        msel() { const m = this.filters.month; return m.length ? [...m].map(Number).sort((a, b) => a - b) : null; },
+        fctx() {
+            const R = this.report, F = this.filters, y0 = R.dataYear || 2026, ms = this.msel;
+            const dimOf = i => new Date(y0, i + 1, 0).getDate();
+            const dimSum = ms ? ms.reduce((a, i) => a + dimOf(i), 0) : 0;
+            const yset = F.year.length ? new Set(F.year.map(String)) : null, sset = F.seg.length ? new Set(F.seg) : null;
+            const vset = F.vid.length ? new Set(F.vid.map(String)) : null, cs = F.cust.length ? new Set(F.cust) : null;
+            const mset = ms ? new Set(ms) : null;
+            return { ms, mset, dimOf, dimSum, mf: ms ? dimSum / 365 : 1, cs, sset, vset, y0,
+                yOk: y => !yset || yset.has(String(y)), segOk: p => (!sset || sset.has(p.seg)) && (!vset || vset.has(String(p.vid))),
+                mOk: i => !mset || mset.has(i), cOk: c => !cs || cs.has(c || NO_CUST) };
+        },
+        /* Plaka başına seçili aylardaki müşteri kırılımı: fiyat anahtarları (segment+müşteri → gün), müşteri günleri ve dosya sayıları */
+        plateCust() {
+            const R = this.report, ms = this.msel, out = new Map();
+            R.plates.forEach(p => {
+                const keys = {}, cf = {}, cd = {}; let tot = 0;
+                const addP = pr => { for (const k in pr) { const d = pr[k], c = E.splitKey(k)[1]; keys[k] = (keys[k] || 0) + d; cd[c] = (cd[c] || 0) + d; tot += d; } };
+                const addF = o => { for (const c in o) cf[c] = (cf[c] || 0) + o[c]; };
+                if (ms) ms.forEach(i => { addP(p.mPrice[i]); addF(p.mCf[i]); }); else { addP(p.price); p.mCf.forEach(addF); }
+                out.set(p.id, { keys, cf, cd, tot });
+            });
+            return out;
+        },
+        /* Müşteri filtresi seçiliyken: o müşterilerin talebiyle segment bazında gereken araç (tek başına) */
+        custCurve() {
+            const X = this.fctx; if (!X.cs) return null;
+            const R = this.report, bySeg = {};
+            R.sim.assign.forEach(a => { if (X.cs.has(a.c)) (bySeg[a.seg] = bySeg[a.seg] || []).push({ s: a.s, e: a.e }); });
+            const out = {};
+            Object.keys(bySeg).forEach(k => {
+                const cv = E.fleetCurve(bySeg[k], this.timeRule), cum = []; let c = 0;
+                cv.forEach(u => { c += u.files; cum.push(c); });
+                out[k] = { total: bySeg[k].length, peak: cv.length, cum };
+            });
+            return out;
+        },
+
         /* Filtrelere göre tüm özetler (simülatör + raporlama) */
         view() {
-            const R = this.report, F = this.filters, sc = R.scale || 1;
-            const mi = F.month === 'all' ? null : Number(F.month);
-            const dim = mi === null ? 0 : new Date(R.dataYear || 2026, mi + 1, 0).getDate();
-            const mf = mi === null ? 1 : dim / 365; // ay seçiliyken yıllık giderler gün sayısına oranlanır
-            const rate = (sg, y) => Number(((this.settings.gunlukTutar || {})[sg] || {})[y]) || 0;
-            const segOk = p => (F.seg === 'all' || p.seg === F.seg) && (F.vid === 'all' || p.vid === F.vid);
-            const yOk = y => F.year === 'all' || String(y) === String(F.year);
+            const R = this.report, X = this.fctx, sc = R.scale || 1, ms = X.ms, cs = X.cs, mf = X.mf, PC = this.plateCust, RT = R.rates;
+            const yOk = X.yOk;
             const z = () => ({ work: 0, idle: 0, revenue: 0, sale: 0, op: 0, buy: 0, int: 0, cost: 0, pers: 0, net: 0, plates: 0, files: 0 });
             const add = (a, r) => { a.work += r.work; a.idle += r.idle; a.revenue += r.revenue; a.sale += r.sale; a.op += r.op; a.buy += r.buy; a.int += r.int; a.cost += r.cost; a.pers += r.pers; a.net += r.net; a.files += r.f; };
-            // Ay seçiliyse: o ay teslim edilen dosyaların çalışma günü ve geliri; araç satışı hariç
+            const sumC = o => { let x = 0; for (const c in o) if (cs.has(c)) x += o[c]; return x; };
+            const shareOf = p => { const pc = PC.get(p.id); return pc.tot ? sumC(pc.cd) / pc.tot : 0; };
+            /* Plakanın bir yıldaki sonucu. Ay seçiliyse seçili aylarda teslim edilen dosyaların çalışma günü ve geliri; yıllık giderler gün sayısına oranlanır, satış hariç.
+               Müşteri seçiliyse gelir yalnızca o müşterilerin dosyalarından; giderler, çalışılan ve boşta gün o müşterilerin plakadaki kiralama günü payıyla dağıtılır. */
             const rec = (p, y) => {
-                const r = p.byYear[y];
-                if (mi === null) return { ...r, f: p.files };
-                const m = p.months[mi], revenue = r.mRev[mi], op = r.op * mf, buy = r.buy * mf, int = r.int * mf, pers = r.pers * mf;
-                const ow = Math.min(dim, Math.round(m.occ));
-                return { work: ow, idle: Math.max(0, dim - ow), revenue, sale: 0, op, buy, int, cost: op + buy + int, pers, net: revenue - op - buy - int - pers, f: m.files };
+                const r = p.byYear[y]; let o;
+                if (!ms) o = { work: r.work, idle: r.idle, revenue: r.revenue, sale: r.sale, op: r.op, buy: r.buy, int: r.int, pers: r.pers, f: p.files };
+                else {
+                    let work = 0, idle = 0, revenue = 0, f = 0;
+                    ms.forEach(i => { const dim = X.dimOf(i), ow = Math.min(dim, Math.round(p.months[i].occ)); work += ow; idle += Math.max(0, dim - ow); revenue += r.mRev[i]; f += p.months[i].files; });
+                    o = { work, idle, revenue, sale: 0, op: r.op * mf, buy: r.buy * mf, int: r.int * mf, pers: r.pers * mf, f };
+                }
+                if (cs) {
+                    const pc = PC.get(p.id), sh = pc.tot ? sumC(pc.cd) / pc.tot : 0;
+                    ['work', 'idle', 'sale', 'op', 'buy', 'int', 'pers'].forEach(k => { o[k] *= sh; });
+                    let rev = 0; for (const k in pc.keys) { const [sg, c] = E.splitKey(k); if (cs.has(c)) rev += pc.keys[k] * sc * RT.rate(c, sg, y); }
+                    o.revenue = rev * (ms ? 1 : p.cap); o.f = sumC(pc.cf) * sc;
+                }
+                o.cost = o.op + o.buy + o.int; o.net = o.revenue + o.sale - o.cost - o.pers;
+                return o;
             };
-            const total = z(), yearAgg = {}, yearFull = {}, segAgg = {}, modelAgg = {}, items = {}, cats = {}, plateRows = [], monthWork = Array(12).fill(0);
+            /* Geri ödeme için tüm yıl (ay filtresinden bağımsız) sonuç; müşteri seçiliyse o müşterilerin payı */
+            const recFull = (p, y) => {
+                const r = p.byYear[y]; if (!cs) return { ...r, f: p.files };
+                let a = 0, t = 0, rev = 0;
+                for (const k in p.price) { const d = p.price[k], [sg, c] = E.splitKey(k); t += d; if (cs.has(c)) { a += d; rev += d * sc * RT.rate(c, sg, y); } }
+                const sh = t ? a / t : 0, o = { work: r.work * sh, idle: r.idle * sh, revenue: rev * p.cap, sale: r.sale * sh, op: r.op * sh, buy: r.buy * sh, int: r.int * sh, pers: r.pers * sh, f: 0 };
+                o.cost = o.op + o.buy + o.int; o.net = o.revenue + o.sale - o.cost - o.pers; return o;
+            };
+            const total = z(), yearAgg = {}, yearFull = {}, segAgg = {}, modelAgg = {}, items = {}, cats = {}, plateRows = [], monthWork = Array(12).fill(0), monthCap = Array(12).fill(0);
             R.years.forEach(y => { yearAgg[y] = z(); yearFull[y] = z(); });
             R.plates.forEach(p => {
-                if (!segOk(p)) return;
-                const ct = R.vehicleCosts[p.vid], files1 = mi === null ? p.files : p.months[mi].files;
+                if (!X.segOk(p)) return;
+                const ct = R.vehicleCosts[p.vid], sh = cs ? shareOf(p) : 1;
+                if (cs && !sh) return;
+                const pc = PC.get(p.id), files1 = cs ? sumC(pc.cf) * sc : (ms ? ms.reduce((a, i) => a + p.months[i].files, 0) : p.files);
                 const row = { p, files1, ...z() };
-                p.months.forEach((m, i) => { monthWork[i] += Math.min(m.occ, new Date(R.dataYear || 2026, i + 1, 0).getDate()); });
+                p.months.forEach((m, i) => {
+                    const dim = X.dimOf(i), k = cs ? this.dayShare(p.mPrice[i], cs) : 1;
+                    monthWork[i] += Math.min(m.occ, dim) * k; monthCap[i] += dim * k;
+                });
                 p.life.forEach(y => {
                     const r = rec(p, y);
                     add(yearAgg[y], r); yearAgg[y].plates++;
-                    add(yearFull[y], { ...p.byYear[y], f: p.files });
+                    add(yearFull[y], recFull(p, y));
                     if (!yOk(y)) return;
                     add(total, r); add(row, r); row.plates++;
                     const sa = segAgg[p.seg] || (segAgg[p.seg] = z()); add(sa, r); sa.plates++;
@@ -400,24 +589,28 @@ const app = createApp({
                         it.tutar += tutar;
                         const ck = grup + '|' + kategori; cats[ck] = cats[ck] || { grup, kategori, tutar: 0 }; cats[ck].tutar += tutar;
                     };
-                    ct.rows.forEach(x => put('Araç', x.kalem, x.kategori, x.vals[y] * mf));
-                    const sh = p.byYear[y].persShare;
-                    if (sh) R.pers.rows.forEach(x => put('Personel', x.kalem, x.kategori, x.vals[y] * sh * mf));
+                    ct.rows.forEach(x => put('Araç', x.kalem, x.kategori, x.vals[y] * mf * sh));
+                    const ps = p.byYear[y].persShare;
+                    if (ps) R.pers.rows.forEach(x => put('Personel', x.kalem, x.kategori, x.vals[y] * ps * mf * sh));
                 });
                 if (row.plates) { row.util = row.work + row.idle ? row.work / (row.work + row.idle) * 100 : 0; plateRows.push(row); }
             });
             // Üst / alt segment analizi
             const cross = { up: { files: 0, days: 0, gain: 0, diff: 0 }, down: { files: 0, days: 0, gain: 0, diff: 0 } };
             R.plates.forEach(p => {
-                if (F.vid !== 'all' && p.vid !== F.vid) return;
+                if (X.vset && !X.vset.has(String(p.vid))) return;
                 const ys = p.life.filter(yOk); if (!ys.length) return;
                 p.cross.forEach(c => {
-                    if (F.vid === 'all' && F.seg !== 'all' && c.req !== F.seg) return;
-                    const src = mi === null ? c : c.m[mi]; if (!src.files) return;
-                    const t = cross[c.kind], d = src.days * sc; t.files += src.files * sc; t.days += d;
+                    if (!X.vset && X.sset && !X.sset.has(c.req)) return;
+                    if (cs && !cs.has(c.c || NO_CUST)) return;
+                    let fl = c.files, dy = c.days;
+                    if (ms) { fl = 0; dy = 0; ms.forEach(i => { fl += c.m[i].files; dy += c.m[i].days; }); }
+                    if (!fl) return;
+                    const t = cross[c.kind], d = dy * sc; t.files += fl * sc; t.days += d;
                     ys.forEach(y => {
-                        if (c.kind === 'up') { t.gain += d * rate(c.req, y); t.diff += d * (rate(c.given, y) - rate(c.req, y)); }
-                        else { t.gain += d * rate(c.given, y); t.diff += d * (rate(c.req, y) - rate(c.given, y)); }
+                        const rq = RT.rate(c.c, c.req, y), gv = RT.rate(c.c, c.given, y);
+                        if (c.kind === 'up') { t.gain += d * rq; t.diff += d * (gv - rq); }
+                        else { t.gain += d * gv; t.diff += d * (rq - gv); }
                     });
                 });
             });
@@ -427,25 +620,31 @@ const app = createApp({
                 return { year: y, ...a, cum, util: a.work + a.idle ? a.work / (a.work + a.idle) * 100 : 0 };
             });
             // Geri ödeme: yıllık bazda kümülatif net ilk kez ≥ 0
-            let pc = 0, payback = null; const activeYears = R.years.filter(y => yearFull[y].plates || yearFull[y].cost);
-            activeYears.forEach((y, i) => { pc += yearFull[y].net; if (payback === null && pc >= 0) payback = { n: i + 1, year: y }; });
-            const stats = R.sim.segStats, vSeg = (this.vehicles.find(v => v.id === F.vid) || {}).segment;
-            const sStat = k => { const s = stats[k]; if (!s) return { total: 0, handled: 0, own: 0, up: 0, down: 0, days: 0 }; return mi === null ? s : s.m[mi]; };
-            const segKeys = Object.keys(stats).filter(k => F.vid !== 'all' ? k === vSeg : (F.seg === 'all' || k === F.seg));
+            let pcum = 0, payback = null; const activeYears = R.years.filter(y => yearFull[y].plates || yearFull[y].cost);
+            activeYears.forEach((y, i) => { pcum += yearFull[y].net; if (payback === null && pcum >= 0) payback = { n: i + 1, year: y }; });
+            const stats = R.sim.segStats;
+            const vSegs = X.vset ? new Set(this.vehicles.filter(v => X.vset.has(String(v.id))).map(v => v.segment)) : null;
+            const sStat = k => this.statOf(stats[k], ms, cs);
+            const segKeys = Object.keys(stats).filter(k => (vSegs ? vSegs.has(k) : (!X.sset || X.sset.has(k))));
             const demand = segKeys.reduce((a, k) => a + sStat(k).total, 0);
-            const handled = F.vid !== 'all' ? Math.round(plateRows.reduce((a, r) => a + r.files1, 0)) : segKeys.reduce((a, k) => a + sStat(k).handled, 0);
+            const handled = X.vset ? Math.round(plateRows.reduce((a, r) => a + r.files1, 0)) : segKeys.reduce((a, k) => a + sStat(k).handled, 0);
             const rentalDays = segKeys.reduce((a, k) => a + sStat(k).days, 0), simHandled = segKeys.reduce((a, k) => a + sStat(k).handled, 0);
             const files = { total: demand, handled, missed: Math.max(0, demand - handled), ratio: demand ? handled / demand * 100 : 0 };
             const order = k => { const i = SEGMENTS.indexOf(k); return i < 0 ? 99 : i; };
-            const allSegs = [...new Set([...Object.keys(stats), ...Object.keys(segAgg)])].filter(k => F.seg === 'all' || k === F.seg).sort((a, b) => order(a) - order(b));
+            const CC = this.custCurve;
+            const curveOf = k => {
+                if (CC) { const c = CC[k]; return c ? { peak: c.peak, need: pct => { const n = c.cum.findIndex(x => x >= pct / 100 * c.total - 1e-9); return n < 0 ? c.peak : n + 1; } } : { peak: 0, need: () => 0 }; }
+                const c = R.curves[k]; if (!c || !c.total) return { peak: c ? c.peak : 0, need: () => 0 };
+                return { peak: c.peak, need: pct => { const p = c.points.find(x => x.handled >= pct / 100 * c.total - 1e-9); return p ? p.n : c.peak; } };
+            };
+            const allSegs = [...new Set([...Object.keys(stats), ...Object.keys(segAgg)])].filter(k => !X.sset || X.sset.has(k)).sort((a, b) => order(a) - order(b));
             const segmentRows = allSegs.map(k => {
                 const a = segAgg[k] || z(), st = sStat(k);
-                const cnt = R.plates.filter(p => p.seg === k && (F.vid === 'all' || p.vid === F.vid)).length;
-                const cv = R.curves[k] || { peak: 0 };
+                const cnt = R.plates.filter(p => p.seg === k && (!X.vset || X.vset.has(String(p.vid)))).length;
                 return { seg: k, cnt, total: st.total, handled: st.handled, cross: st.up + st.down, missed: st.total - st.handled, ratio: st.total ? st.handled / st.total * 100 : 0,
-                    peak: cv.peak, ...a, util: a.work + a.idle ? a.work / (a.work + a.idle) * 100 : 0 };
-            });
-            const modelRows = this.sortedVehicles.filter(v => (F.seg === 'all' || v.segment === F.seg) && (F.vid === 'all' || v.id === F.vid) && (R.counts[v.id] || 0) > 0).map(v => {
+                    peak: curveOf(k).peak, ...a, util: a.work + a.idle ? a.work / (a.work + a.idle) * 100 : 0 };
+            }).filter(r => r.cnt || r.total || r.plates);
+            const modelRows = this.sortedVehicles.filter(v => (!X.sset || X.sset.has(v.segment)) && (!X.vset || X.vset.has(String(v.id))) && (R.counts[v.id] || 0) > 0).map(v => {
                 const a = modelAgg[v.id] || z();
                 return { v, cnt: R.counts[v.id] || 0, ...a, util: a.work + a.idle ? a.work / (a.work + a.idle) * 100 : 0 };
             });
@@ -458,29 +657,69 @@ const app = createApp({
             const util = total.work + total.idle ? total.work / (total.work + total.idle) * 100 : 0;
             // Başabaş doluluk: gelir çalışılan günle doğru orantılı kabul edilir
             const breakEven = total.revenue > 0 ? util * Math.max(0, gider - total.sale) / total.revenue : null;
-            const peak = segKeys.reduce((a, k) => a + ((R.curves[k] || {}).peak || 0), 0);
+            const peak = segKeys.reduce((a, k) => a + curveOf(k).peak, 0);
             const fleetIn = segKeys.reduce((a, k) => a + R.plates.filter(p => p.seg === k).length, 0);
-            const needFor = pct => segKeys.reduce((a, k) => { const c = R.curves[k]; if (!c || !c.total) return a; const p = c.points.find(x => x.handled >= pct / 100 * c.total - 1e-9); return a + (p ? p.n : c.peak); }, 0);
+            const needFor = pct => segKeys.reduce((a, k) => a + curveOf(k).need(pct), 0);
             const pctOf = (n) => demand ? n / demand * 100 : 0;
-            const sup = this.supplierCalc(R, segKeys, mi, yOk);
+            const sup = this.supplierCalc(R, segKeys, ms, yOk, null, cs);
             yearRows.forEach(r => { r.sup = (sup.byYear[r.year] || {}).margin || 0; r.company = r.net + r.sup; });
             const ownDayCost = total.work ? (gider - total.sale) / total.work : 0;
             const custDay = sup.ownDays ? sup.ownCust / sup.ownDays : (total.work ? total.revenue / total.work : 0);
             const supDay = sup.ownDays ? sup.ownSup / sup.ownDays : sup.avgSup;
             const cmp = { custDay, supDay, ownProfit: custDay - ownDayCost, supProfit: custDay - supDay, adv: supDay - ownDayCost, advTotal: (supDay - ownDayCost) * total.work };
             return {
-                sup, cmp, companyNet: total.net + sup.margin, ownDayCost,
-                mi, total, gelir, gider, util, breakEven, payback, peak, fleetIn, need80: needFor(80),
+                sup, cmp, companyNet: total.net + sup.margin, ownDayCost, rec,
+                ms, cs, total, gelir, gider, util, breakEven, payback, peak, fleetIn, need80: needFor(80),
                 perFileVeh: pf(total.cost), perFilePers: pf(total.pers), perFileRev: pf(gelir), perFileNet: pf(total.net),
                 plateTotal: plateRows.length, idlePlates: plateRows.filter(r => r.files1 === 0).length,
                 avgWork: plateYears ? total.work / plateYears : 0, avgRental: simHandled ? rentalDays / simHandled : 0,
                 netPerWorkDay: total.work ? total.net / total.work : 0, netPerPlate: plateRows.length ? total.net / plateRows.length : 0,
-                files, segKeys, monthWork,
+                files, segKeys, monthWork, monthCap,
                 up: { ...cross.up, ratio: pctOf(cross.up.files) }, down: { ...cross.down, ratio: pctOf(cross.down.files) },
                 yearRows, segmentRows, modelRows, itemRows, catRows, plateRowsAll: plateRows,
                 plateRows: shownPlates, plateCount: shownPlates.length,
                 itemTotal: itemRows.reduce((sum, r) => sum + r.tutar, 0)
             };
+        },
+        /* Müşteri bazında sonuçlar: talep / karşılama segment istatistiklerinden; gelir müşterinin dosyalarından (kendi tutarıyla);
+           araç ve personel gideri, satış ve çalışılan gün her plakada müşterinin kiralama günü payıyla dağıtılır. */
+        custView() {
+            const R = this.report, X = this.fctx, V = this.view, sc = R.scale || 1, RT = R.rates, PC = this.plateCust, ms = X.ms;
+            const list = this.customerList.filter(c => X.cOk(c));
+            if (!this.hasCustomers) return { rows: [], tot: null, capTotal: 0 };
+            const z = c => ({ c, label: c || NO_CUST_LABEL, total: 0, handled: 0, own: 0, up: 0, down: 0, days: 0, work: 0, revenue: 0, sale: 0, cost: 0, pers: 0, files: 0 });
+            const A = new Map(); list.forEach(c => A.set(c, z(c)));
+            V.segKeys.forEach(k => {
+                const s = R.sim.segStats[k]; if (!s) return;
+                Object.keys(s.c).forEach(c => { const a = A.get(c); if (!a) return; const x = this.statOf(s, ms, new Set([c])); STAT_KEYS.forEach(q => { a[q] += x[q]; }); });
+            });
+            let capTotal = 0;
+            R.plates.forEach(p => {
+                if (!X.segOk(p)) return;
+                const pc = PC.get(p.id), ys = p.life.filter(X.yOk); if (!ys.length) return;
+                ys.forEach(y => {
+                    const b = p.byYear[y]; let work, idle, sale, cost, pers;
+                    if (!ms) { work = b.work; idle = b.idle; sale = b.sale; cost = b.cost; pers = b.pers; }
+                    else { work = 0; idle = 0; ms.forEach(i => { const dim = X.dimOf(i), ow = Math.min(dim, Math.round(p.months[i].occ)); work += ow; idle += Math.max(0, dim - ow); }); sale = 0; cost = b.cost * X.mf; pers = b.pers * X.mf; }
+                    capTotal += work + idle;
+                    if (!pc.tot) return;
+                    for (const c in pc.cd) { const a = A.get(c); if (!a) continue; const sh = pc.cd[c] / pc.tot; a.work += work * sh; a.sale += sale * sh; a.cost += cost * sh; a.pers += pers * sh; }
+                    for (const k in pc.keys) { const [sg, c] = E.splitKey(k), a = A.get(c); if (a) a.revenue += pc.keys[k] * sc * RT.rate(c, sg, y) * (ms ? 1 : p.cap); }
+                });
+                for (const c in pc.cf) { const a = A.get(c); if (a) a.files += pc.cf[c] * sc; }
+            });
+            const sp = this.hasSupplier ? this.supplierCalc(R, V.segKeys, ms, X.yOk, null, X.cs).byCust : {};
+            const rows = [...A.values()].filter(a => a.total || a.revenue || a.files).map(a => {
+                const s = sp[a.c] || { margin: 0, files: 0, lost: 0 }, gider = a.cost + a.pers, gelir = a.revenue + a.sale, net = gelir - gider;
+                return { ...a, gelir, gider, net, cross: a.up + a.down, missed: a.total - a.handled, ratio: a.total ? a.handled / a.total * 100 : 0,
+                    contrib: capTotal ? a.work / capTotal * 100 : 0, margin: gelir ? net / gelir * 100 : 0, avgRental: a.handled ? a.days / a.handled : 0,
+                    revDay: a.work ? a.revenue / a.work : 0, costDay: a.work ? (gider - a.sale) / a.work : 0, netFile: a.handled ? net / a.handled : 0,
+                    sup: s.margin, supFiles: s.files, lost: s.lost, company: net + s.margin };
+            }).sort((a, b) => b.gelir - a.gelir || b.total - a.total);
+            const tot = rows.reduce((t, r) => { ['total', 'handled', 'cross', 'missed', 'days', 'work', 'revenue', 'sale', 'cost', 'pers', 'gelir', 'gider', 'net', 'sup', 'company', 'contrib'].forEach(k => { t[k] += r[k]; }); return t; },
+                { total: 0, handled: 0, cross: 0, missed: 0, days: 0, work: 0, revenue: 0, sale: 0, cost: 0, pers: 0, gelir: 0, gider: 0, net: 0, sup: 0, company: 0, contrib: 0 });
+            tot.ratio = tot.total ? tot.handled / tot.total * 100 : 0; tot.margin = tot.gelir ? tot.net / tot.gelir * 100 : 0;
+            return { rows, tot, capTotal };
         },
         /* Detay tabloları (sıralanabilir) */
         detailTables() {
@@ -508,26 +747,53 @@ const app = createApp({
             const ay = { cols: [col('Ay', 1), col('Talep'), col('Karşılanan'), col('Karşılama'), col('Üst/Alt Seg.'), col('Karşılanamayan'), col('Dolu Gün'), col('Doluluk'), col('Dosya Geliri'), col('Gider (Araç + Personel)'), col('Net'), col('Kümülatif Net')],
                 rows: A.rows.map(r => ({ key: r.mi, cells: [T(r.mi, MONTHS[r.mi], 'text-start fw-bold'), I(r.total), I(r.handled), T(r.ratio, pc(r.ratio), 'fw-bold ' + this.ratioClass(r.ratio)), I(r.cross), T(r.missed, f(r.missed), r.missed ? 'text-danger' : ''), I(r.work), P(r.util), M(r.revenue), M(r.cost), N(r.net), T(r.cum, m(r.cum), 'fw-bold ' + nc(r.cum))] })),
                 foot: A.rows.length ? [T('', 'Toplam', 'text-start'), T(0, f(A.tot.total)), T(0, f(A.tot.handled)), T(0, pc(A.tot.total ? A.tot.handled / A.tot.total * 100 : 0)), T(0, f(A.tot.cross)), T(0, f(A.tot.missed)), T(0, f(A.tot.work)), T(0, pc(A.tot.cap ? A.tot.work / A.tot.cap * 100 : 0) + ' ort.'), T(0, m(A.tot.revenue)), T(0, m(A.tot.cost)), T(0, m(A.tot.net), nc(A.tot.net)), T(0, m(A.tot.net), nc(A.tot.net))] : null };
-            return { yillik, segment, model, giderItems, giderCats, plaka, ay };
+            const CV = this.custView, ct = CV.tot;
+            const mc = [col('Müşteri', 1), col('Dosya'), col('Karşılanan'), col('Üst/Alt Seg.'), col('Karşılanamayan'), col('Karşılama'), col('Kiralama Günü'), col('Doluluğa Katkı'), col('Gelir'), col('Araç Gideri'), col('Personel Gideri'), col('Net'), col('Kârlılık')];
+            if (sup) mc.push(col('Tedarikçi Marjı'), col('Şirket Neti'));
+            const musteri = { cols: mc, rows: CV.rows.map(r => { const c = [T(r.label, r.label, 'text-start fw-bold' + (r.c ? '' : ' text-muted')), I(r.total), I(r.handled), I(r.cross), T(r.missed, f(r.missed), r.missed ? 'text-danger' : ''), T(r.ratio, pc(r.ratio), 'fw-bold ' + this.ratioClass(r.ratio)), I(r.days), P(r.contrib), M(r.gelir), M(r.cost), M(r.pers), N(r.net), T(r.margin, pc(r.margin), nc(r.margin))]; if (sup) c.push(N(r.sup), T(r.company, m(r.company), 'fw-bold ' + nc(r.company))); return { key: r.c || '-', cells: c }; }),
+                foot: ct && CV.rows.length ? [T('', 'Toplam', 'text-start'), T(0, f(ct.total)), T(0, f(ct.handled)), T(0, f(ct.cross)), T(0, f(ct.missed)), T(0, pc(ct.ratio)), T(0, f(ct.days)), T(0, pc(ct.contrib)), T(0, m(ct.gelir)), T(0, m(ct.cost)), T(0, m(ct.pers)), T(0, m(ct.net), nc(ct.net)), T(0, pc(ct.margin), nc(ct.margin)), ...(sup ? [T(0, m(ct.sup), nc(ct.sup)), T(0, m(ct.company), nc(ct.company))] : [])] : null };
+            return { yillik, segment, musteri, model, giderItems, giderCats, plaka, ay };
+        },
+        /* Müşteri bazında aylık talep: en yüksek 5 müşteri + Diğer (filtreler uygulanır) */
+        custMonthly() {
+            if (!this.hasCustomers) return { series: [], rows: [] };
+            const A = this.assignFiltered, tot = {};
+            A.forEach(a => { tot[a.c] = (tot[a.c] || 0) + 1; });
+            const top = Object.keys(tot).sort((a, b) => tot[b] - tot[a]).slice(0, 5), idx = new Map(top.map((c, i) => [c, i]));
+            const other = Object.keys(tot).length > top.length, n = top.length + (other ? 1 : 0);
+            const m = Array.from({ length: 12 }, () => Array(n).fill(0));
+            A.forEach(a => { const i = idx.has(a.c) ? idx.get(a.c) : top.length; m[a.mi][i]++; });
+            const rows = m.map((v, mi) => ({ mi, v, total: v.reduce((x, y) => x + y, 0) })).filter(r => r.total);
+            return { series: [...top.map(c => c || NO_CUST_LABEL), ...(other ? ['Diğer'] : [])], rows, other };
+        },
+        /* Müşteri × segment talep matrisi */
+        custSegments() {
+            if (!this.hasCustomers) return { segs: [], rows: [] };
+            const A = this.assignFiltered, segSet = new Set(), by = new Map(), ord = sg => { const i = SEGMENTS.indexOf(sg); return i < 0 ? 99 : i; };
+            A.forEach(a => { segSet.add(a.seg); const o = by.get(a.c) || {}; o[a.seg] = (o[a.seg] || 0) + 1; by.set(a.c, o); });
+            const segs = [...segSet].sort((a, b) => ord(a) - ord(b));
+            const rows = [...by.entries()].map(([c, o]) => { const v = segs.map(sg => o[sg] || 0); return { c, label: c || NO_CUST_LABEL, v, total: v.reduce((x, y) => x + y, 0) }; }).sort((a, b) => b.total - a.total);
+            return { segs, rows };
         },
         /* Ay bazlı performans (teslim ayına göre) */
         monthDetail() {
-            const R = this.report, F = this.filters, V = this.view, st = R.sim.segStats, y0 = R.dataYear || 2026;
-            const yOk = y => F.year === 'all' || String(y) === String(F.year), yrs = R.years.filter(yOk), nY = yrs.length || 1;
-            const segOk = p => (F.seg === 'all' || p.seg === F.seg) && (F.vid === 'all' || p.vid === F.vid);
+            const R = this.report, X = this.fctx, V = this.view, st = R.sim.segStats, sc = R.scale || 1, RT = R.rates;
+            const yrs = R.years.filter(X.yOk), nY = yrs.length || 1;
             const rows = []; let cum = 0; const tot = { total: 0, handled: 0, cross: 0, missed: 0, work: 0, cap: 0, revenue: 0, cost: 0, net: 0 };
             for (let mi = 0; mi < 12; mi++) {
-                if (V.mi !== null && V.mi !== mi) continue;
-                const dim = new Date(y0, mi + 1, 0).getDate();
-                const d = { total: 0, handled: 0, cross: 0 };
-                V.segKeys.forEach(k => { const x = st[k] && st[k].m[mi]; if (x) { d.total += x.total; d.handled += x.handled; d.cross += x.up + x.down; } });
+                if (!X.mOk(mi)) continue;
+                const dim = X.dimOf(mi), d = { total: 0, handled: 0, cross: 0 };
+                V.segKeys.forEach(k => { const x = this.statOf(st[k], [mi], X.cs); d.total += x.total; d.handled += x.handled; d.cross += x.up + x.down; });
                 let work = 0, cap = 0, revenue = 0, cost = 0;
                 R.plates.forEach(p => {
-                    if (!segOk(p)) return;
+                    if (!X.segOk(p)) return;
+                    const k = X.cs ? this.dayShare(p.mPrice[mi], X.cs) : 1; if (!k) return;
                     p.life.forEach(y => {
-                        if (!yOk(y)) return;
+                        if (!X.yOk(y)) return;
                         const b = p.byYear[y];
-                        work += Math.min(p.months[mi].occ, dim); cap += dim; revenue += b.mRev[mi]; cost += (b.cost + b.pers) * dim / 365;
+                        work += Math.min(p.months[mi].occ, dim) * k; cap += dim * k; cost += (b.cost + b.pers) * dim / 365 * k;
+                        if (!X.cs) revenue += b.mRev[mi];
+                        else { const pr = p.mPrice[mi]; for (const key in pr) { const [sg, c] = E.splitKey(key); if (X.cs.has(c)) revenue += pr[key] * sc * RT.rate(c, sg, y); } }
                     });
                 });
                 if (!d.total && !work) continue;
@@ -539,23 +805,22 @@ const app = createApp({
         },
         /* Operasyon yükü: kendi filomuzun günlük teslimat ve iade işlemleri */
         opsLoad() {
-            const R = this.report, F = this.filters, V = this.view, plate = {};
+            const R = this.report, X = this.fctx, plate = {};
             R.plates.forEach(p => { plate[p.id] = p; });
-            const segOk = p => (F.seg === 'all' || p.seg === F.seg) && (F.vid === 'all' || p.vid === F.vid);
             const day = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
             const del = {}, ret = {}; let lo = Infinity, hi = -Infinity;
             R.sim.assign.forEach(a => {
                 if (a.s < lo) lo = a.s; if (a.e > hi) hi = a.e;
-                const p = a.unit ? plate[a.unit] : null; if (!p || !segOk(p)) return;
-                if (V.mi === null || a.mi === V.mi) { const k = day(a.s); del[k] = (del[k] || 0) + 1; }
-                if (V.mi === null || new Date(a.e).getMonth() === V.mi) { const k = day(a.e); ret[k] = (ret[k] || 0) + 1; }
+                const p = a.unit ? plate[a.unit] : null; if (!p || !X.segOk(p) || !X.cOk(a.c)) return;
+                if (X.mOk(a.mi)) { const k = day(a.s); del[k] = (del[k] || 0) + 1; }
+                if (X.mOk(new Date(a.e).getMonth())) { const k = day(a.e); ret[k] = (ret[k] || 0) + 1; }
             });
             const out = { max: { total: 0, del: 0, ret: 0, date: '-' }, min: { total: 0, del: 0, ret: 0, date: '-' }, avgTotal: 0, avgDel: 0, avgRet: 0, maxDel: 0, maxRet: 0, perAvg: 0, perMax: 0, days: 0 };
             if (lo === Infinity) return out;
             let d0 = day(lo), d1 = day(hi);
             const list = [];
             for (let t = d0; t <= d1; t = new Date(new Date(t).getFullYear(), new Date(t).getMonth(), new Date(t).getDate() + 1).getTime()) {
-                if (V.mi !== null && new Date(t).getMonth() !== V.mi) continue;
+                if (!X.mOk(new Date(t).getMonth())) continue;
                 list.push({ t, del: del[t] || 0, ret: ret[t] || 0 });
             }
             if (!list.length) return out;
@@ -575,22 +840,20 @@ const app = createApp({
         curveSegs() { return SEGMENTS.filter(s => (this.report.curves[s] || {}).total > 0); },
         segsNoModel() { return Object.keys(this.report.curves).filter(k => this.report.curves[k].total > 0 && !this.report.curves[k].hasModel); },
         curveSeg() {
-            if (this.filters.seg !== 'all' && this.curveSegs.includes(this.filters.seg)) return this.filters.seg;
+            if (this.filters.seg.length === 1 && this.curveSegs.includes(this.filters.seg[0])) return this.filters.seg[0];
             return this.curveSegs.includes(this.reportSeg) ? this.reportSeg : (this.curveSegs[0] || null);
         },
         assignFiltered() {
-            const R = this.report, F = this.filters, V = this.view, mi = V.mi;
-            return R.sim.assign.filter(a => V.segKeys.includes(a.seg) && (mi === null || a.mi === mi));
+            const R = this.report, X = this.fctx, V = this.view;
+            return R.sim.assign.filter(a => V.segKeys.includes(a.seg) && X.mOk(a.mi) && X.cOk(a.c));
         },
         monthly() {
-            const R = this.report, V = this.view, st = R.sim.segStats, y = R.dataYear || 2026;
-            const rows = MONTHS.map((m, i) => {
+            const R = this.report, V = this.view, X = this.fctx, st = R.sim.segStats;
+            return MONTHS.map((m, i) => {
                 const t = { total: 0, own: 0, up: 0, down: 0, handled: 0 };
-                V.segKeys.forEach(k => { const s = st[k]; if (!s) return; const x = s.m[i]; t.total += x.total; t.own += x.own; t.up += x.up; t.down += x.down; t.handled += x.handled; });
-                const dim = new Date(y, i + 1, 0).getDate(), plates = V.plateRowsAll.length;
-                return { m, ...t, missed: t.total - t.handled, util: plates && t.total ? V.monthWork[i] / (plates * dim) * 100 : null };
+                V.segKeys.forEach(k => { const x = this.statOf(st[k], [i], X.cs); t.total += x.total; t.own += x.own; t.up += x.up; t.down += x.down; t.handled += x.handled; });
+                return { m, ...t, missed: t.total - t.handled, util: V.monthCap[i] && t.total ? V.monthWork[i] / V.monthCap[i] * 100 : null };
             });
-            return rows;
         },
         rentalHist() {
             const b = [['1 gün', 1, 1], ['2 gün', 2, 2], ['3 gün', 3, 3], ['4-5 gün', 4, 5], ['6-7 gün', 6, 7], ['8-14 gün', 8, 14], ['15-30 gün', 15, 30], ['30+ gün', 31, 1e9]];
@@ -635,6 +898,11 @@ const app = createApp({
             const mr = [...V.modelRows].sort((a, b) => b.net / Math.max(1, b.cnt) - a.net / Math.max(1, a.cnt));
             if (mr.length > 1) out.push(`Araç başı en kârlı model <b>${mr[0].v.markaModel}</b> (${this.shortMoney(mr[0].net / Math.max(1, mr[0].cnt))}), en zayıf model <b>${mr[mr.length - 1].v.markaModel}</b> (${this.shortMoney(mr[mr.length - 1].net / Math.max(1, mr[mr.length - 1].cnt))}).`);
             const mo = this.monthly.filter(m => m.total); if (mo.length) { const top = mo.reduce((a, b) => (b.total > a.total ? b : a)); out.push(`Talebin en yoğun olduğu ay <b>${top.m}</b> (${this.formatCurrency(top.total)} dosya, karşılama ${this.pct(top.total ? top.handled / top.total * 100 : 0)}).`); }
+            const CR = this.custView.rows.filter(r => r.c);
+            if (CR.length > 1) {
+                const top = CR[0], best = CR.reduce((a, r) => (r.net > a.net ? r : a), CR[0]), lossN = CR.filter(r => r.net < 0).length, gt = this.custView.tot.gelir;
+                out.push(`${CR.length} müşteri içinde en çok gelir getiren <b>${top.label}</b> (${this.shortMoney(top.gelir)}, gelirin ${this.pct(gt ? top.gelir / gt * 100 : 0)}'i, karşılama ${this.pct(top.ratio)}). En kârlı müşteri <b>${best.label}</b> (net ${this.shortMoney(best.net)})${lossN ? `; <b class="text-danger">${lossN}</b> müşteride filo zarar ediyor` : ''}.`);
+            }
             if (V.up.files || V.down.files) out.push(`Üst segmentle ${this.formatCurrency(V.up.files)}, alt segmentle ${this.formatCurrency(V.down.files)} ek dosya karşılandı; ek gelir <b>${this.shortMoney(V.up.gain + V.down.gain)}</b>.`);
             return out;
         },
@@ -659,7 +927,7 @@ const app = createApp({
             const fs = V.files, k = V.cmp || {}, gider = t.cost + t.pers;
             return {
                 'Araç Satış Geliri': `Optimum satış yılını dolduran araçların satış tutarı, satış yılında gelir yazılır.\nAraç ömrü tanımlı yıllardan uzunsa satış hesaba katılmaz. Ay filtresi seçiliyken dahil edilmez.\nToplam: ${m(t.sale)}`,
-                'Dosya Geliri': `Her plaka için: çalıştığı gün × günlük tutar (o yılın).\nÜst segment verilen dosya talep edilen segmentin, alt segment verilen dosya verilen segmentin tutarıyla fiyatlanır.\nGün sayımı: tam 24 saatler + 3 saatten fazla artan süre 1 gün.\nToplam: ${f(t.work)} gün → ${m(t.revenue)}`,
+                'Dosya Geliri': `Her plaka için: çalıştığı gün × günlük tutar (o yılın).\nGünlük tutar dosyanın müşterisine göre alınır; müşteriye tutar girilmemişse varsayılan segment tutarı kullanılır.\nMüşteri filtresi seçiliyken yalnızca o müşterilerin dosyalarının geliri; giderler araç başına müşterinin kiralama günü payıyla dağıtılır.\nÜst segment verilen dosya talep edilen segmentin, alt segment verilen dosya verilen segmentin tutarıyla fiyatlanır.\nGün sayımı: tam 24 saatler + 3 saatten fazla artan süre 1 gün.\nToplam: ${f(t.work)} gün → ${m(t.revenue)}`,
                 'Araç İşletme Gideri': `Araç gider başlıklarının yıllık tutarları × araç adedi.\nYıllık tutar: baz yıl girilen tutar, sonraki yıllar enflasyonla artar. Km bazlı (bakım), ömür boyu adet (lastik), yılda adet (temizlik), tek seferlik ve yakıt km başlıkları kendi kurallarıyla hesaplanır. Araç başı detay: araç kartında "İncele".\nToplam: ${m(t.op)}`,
                 'Alış Gideri': `Araç alış bedelinin anapara kısmı.\nPeşin: tamamı ilk kullanım yılına. Kredili: her yıl ödenen taksitlerin anapara kısmı; kredi araç ömründen uzunsa kalan anapara satış yılında kapatılır.\nToplam: ${m(t.buy)}`,
                 'Faiz Gideri': `Kredili araçların taksitlerindeki faiz kısmı (eşit taksit; aylık faiz = yıllık faiz ÷ 12). Taksit ödendiği yıla yazılır.\nToplam: ${m(t.int)}`,
@@ -703,11 +971,12 @@ const app = createApp({
         sensitivity() { return this.sensData; },
         /* Model karar tablosu: çalışılan gün başı gelir / maliyet ve tedarikçiye göre avantaj */
         modelDecision() {
-            const V = this.view, F = this.filters, ts = this.settings.tedarikciTutar || {};
-            const yrs = this.years.filter(y => F.year === 'all' || String(y) === String(F.year));
+            const V = this.view, X = this.fctx, R = this.report;
+            const yrs = this.years.filter(X.yOk);
             return V.modelRows.map(r => {
                 const w = r.work, custDay = w ? r.revenue / w : 0, costDay = w ? (r.cost + r.pers - r.sale) / w : 0;
-                const sv = yrs.map(y => Number((ts[r.v.segment] || {})[y]) || 0).filter(x => x > 0), supDay = sv.length ? sv.reduce((a, b) => a + b, 0) / sv.length : 0;
+                // tedarikçi günlük tutarı: segmentteki talebin müşteri dağılımıyla ağırlıklı ortalama
+                const sv = yrs.map(y => R.segAvg(r.v.segment, y).sup).filter(x => x > 0), supDay = sv.length ? sv.reduce((a, b) => a + b, 0) / sv.length : 0;
                 return { v: r.v, cnt: r.cnt, util: r.util, custDay, costDay, supDay, own: custDay - costDay, adv: supDay ? supDay - costDay : null, marg: this.margOf(r.v) === null ? undefined : this.margOf(r.v) };
             });
         },
@@ -782,6 +1051,8 @@ const app = createApp({
                 insight: bestS ? `En kârlı segment ${bestS.seg} (net ${sm(bestS.net)}).` : '',
                 cols: ['Segment', 'Araç', 'Karşılama', 'Gelir', 'Gider', 'Net'],
                 rows: S.map(r => [c(r.seg, 'text-start fw-bold'), c(f(r.cnt)), c(pc(r.ratio), this.ratioClass(r.ratio)), c(sm(r.revenue + r.sale)), c(sm(r.cost + r.pers)), c(sm(r.net), nc(r.net))]) });
+            // Müşteri bazlı analizler
+            this.custBlocks(B, c, nc);
             // 9. Kiralama süresi
             const H = this.rentalHist, hn = H.reduce((a, h) => a + h.n, 0), le7 = H.slice(0, 5).reduce((a, h) => a + h.n, 0);
             B.push({ id: 'chRental', title: 'Kiralama Süresi Dağılımı', sub: 'Dosyaların kaç gün sürdüğü (tüm talep).',
@@ -834,38 +1105,37 @@ const app = createApp({
         },
         /* Detaylı veri seti */
         dsRows() {
-            const R = this.report, F = this.filters, q = this.ds.search.trim().toLocaleLowerCase('tr');
+            const R = this.report, X = this.fctx, q = this.ds.search.trim().toLocaleLowerCase('tr'), cu = this.hasCustomers;
             if (this.ds.type === 'dosya') {
                 const plate = {}; R.plates.forEach(p => { plate[p.id] = p; });
-                const y = F.year === 'all' ? R.years[0] : Number(F.year);
-                const rate = (sg) => Number(((this.settings.gunlukTutar || {})[sg] || {})[y]) || 0;
+                const ys = R.years.filter(X.yOk), y = ys.length ? ys[0] : R.years[0];
                 const st = this.ds.status;
                 return this.assignFiltered.filter(a => {
                     const p = a.unit ? plate[a.unit] : null;
-                    if (F.vid !== 'all' && (!p || p.vid !== F.vid)) return false;
+                    if (X.vset && (!p || !X.vset.has(String(p.vid)))) return false;
                     if (st !== 'all' && (st === 'missed' ? a.unit : a.kind !== st)) return false;
-                    if (q && !(String(a.no) + ' ' + (p ? p.plate + ' ' + p.model : '')).toLocaleLowerCase('tr').includes(q)) return false;
+                    if (q && !(String(a.no) + ' ' + (a.c || '') + ' ' + (p ? p.plate + ' ' + p.model : '')).toLocaleLowerCase('tr').includes(q)) return false;
                     return true;
                 }).map(a => {
                     const p = a.unit ? plate[a.unit] : null, ps = a.kind === 'down' ? a.given : a.seg;
-                    return { 'Dosya No': a.no, 'Talep Segmenti': a.seg, 'Teslimat': E.formatDate(a.s), 'İade': E.formatDate(a.e), 'Gün': a.days,
+                    const o = { 'Dosya No': a.no };
+                    if (cu) o['Müşteri'] = a.c || NO_CUST_LABEL;
+                    return Object.assign(o, { 'Talep Segmenti': a.seg, 'Teslimat': E.formatDate(a.s), 'İade': E.formatDate(a.e), 'Gün': a.days,
                         'Durum': { own: 'Kendi segmenti', up: 'Üst segment', down: 'Alt segment' }[a.kind] || 'Karşılanamadı',
                         'Verilen Segment': a.given || '-', 'Plaka': p ? p.plate : '-', 'Araç': p ? p.model : '-',
-                        ['Gelir (' + y + ')']: a.unit ? a.days * rate(ps) : 0 };
+                        ['Gelir (' + y + ')']: a.unit ? a.days * R.rates.rate(a.c, ps, y) : 0 });
                 });
             }
-            const V = this.view, out = [], mi = V.mi;
+            const V = this.view, out = [];
             V.plateRowsAll.forEach(r => {
                 const p = r.p;
                 if (q && !(p.plate + ' ' + p.model).toLocaleLowerCase('tr').includes(q)) return;
                 p.life.forEach(y => {
-                    if (F.year !== 'all' && String(y) !== String(F.year)) return;
-                    const b = p.byYear[y], dim = mi === null ? 0 : new Date(this.report.dataYear || 2026, mi + 1, 0).getDate(), mf = mi === null ? 1 : dim / 365;
-                    const work = mi === null ? b.work : p.months[mi].work, idle = mi === null ? b.idle : Math.max(0, dim - work);
-                    const rev = mi === null ? b.revenue : b.mRev[mi], sale = mi === null ? b.sale : 0, op = b.op * mf, buy = b.buy * mf, int = b.int * mf, pers = b.pers * mf;
-                    out.push({ 'Plaka': p.plate, 'Araç': p.model, 'Segment': p.seg, 'Yıl': y, 'Dosya': Math.round(mi === null ? p.files : p.months[mi].files),
-                        'Çalışılan Gün': work, 'Boşta Gün': idle, 'Doluluk %': work + idle ? Math.round(work / (work + idle) * 1000) / 10 : 0,
-                        'Dosya Geliri': rev, 'Araç Satış Geliri': sale, 'İşletme Gideri': op, 'Alış Gideri': buy, 'Faiz Gideri': int, 'Personel Payı': pers, 'Net': rev + sale - op - buy - int - pers });
+                    if (!X.yOk(y)) return;
+                    const b = V.rec(p, y);
+                    out.push({ 'Plaka': p.plate, 'Araç': p.model, 'Segment': p.seg, 'Yıl': y, 'Dosya': Math.round(b.f),
+                        'Çalışılan Gün': b.work, 'Boşta Gün': b.idle, 'Doluluk %': b.work + b.idle ? Math.round(b.work / (b.work + b.idle) * 1000) / 10 : 0,
+                        'Dosya Geliri': b.revenue, 'Araç Satış Geliri': b.sale, 'İşletme Gideri': b.op, 'Alış Gideri': b.buy, 'Faiz Gideri': b.int, 'Personel Payı': b.pers, 'Net': b.net });
                 });
             });
             return out;
@@ -888,8 +1158,14 @@ const app = createApp({
         this.tempVehicle = this.getEmptyVehicle();
         try { this.costClip = JSON.parse(localStorage.getItem(STORAGE_KEY + '_kopya') || 'null'); } catch (e) { this.costClip = null; }
         this.$watch(() => [this.settings, this.vehicles, this.historicalData, this.timeRule], () => this.scheduleSave(), { deep: true });
-        this.$watch(() => [this.filters.seg, this.filters.vid, this.filters.month, this.plateSearch], () => { this.plateLimit = 100; });
-        this.$watch(() => this.filters.seg, () => { if (this.filters.vid !== 'all' && !this.brandOptions.some(v => v.id === this.filters.vid)) this.filters.vid = 'all'; });
+        this.$watch(() => [JSON.stringify(this.filters), this.plateSearch], () => { this.plateLimit = 100; });
+        this.$watch(() => this.filters.seg.join('|'), () => { const ok = new Set(this.brandOptions.map(v => String(v.id))); const nv = this.filters.vid.filter(id => ok.has(String(id))); if (nv.length !== this.filters.vid.length) this.filters.vid = nv; });
+        // Tarihçeden kalkan müşteri filtreden düşer; Günlük Tutar sayfasında seçili müşteri her zaman listede olur
+        this.$watch(() => this.customerList.join('|'), () => {
+            const ok = new Set(this.customerList); const nc = this.filters.cust.filter(c => ok.has(c)); if (nc.length !== this.filters.cust.length) this.filters.cust = nc;
+            const L = this.histCustomers.list; if (L.length && !L.some(o => o.c === this.gtCust)) this.gtCust = L[0].c; if (!L.length) this.gtCust = null;
+        }, { immediate: true });
+        this.$watch(() => [this.gtCust, this.authed, !!this.custEntry], () => this.ensureCustEntry(this.gtCust), { immediate: true });
         this.$watch(() => this.activeTab, () => { const mc = document.querySelector('.main-content'); if (mc) mc.scrollTop = 0; this.headerError = ''; this.newHeader = ''; this.newCategory = ''; this.newAmount = null; this.newTip = 'yillik'; });
         if (window.CloudSync && window.CloudSync.enabled) window.CloudSync.init(this);
         else { this.auth.state = 'in'; this.sync.loaded = true; this.sync.status = 'local'; }
@@ -904,7 +1180,7 @@ const app = createApp({
         this.$watch(() => this.present, () => this.$nextTick(() => this.scheduleCharts()));
         this.$watch(() => this.histSize, () => { this.histPage = 1; });
         this.$watch(() => this.histPages, n => { if (this.histPage > n) this.histPage = n; });
-        this.$watch(() => [this.ds.type, this.ds.status, this.ds.search, this.ds.size, this.filters.year, this.filters.month, this.filters.seg, this.filters.vid], () => { this.ds.page = 1; });
+        this.$watch(() => [this.ds.type, this.ds.status, this.ds.search, this.ds.size, JSON.stringify(this.filters)], () => { this.ds.page = 1; });
         this.$watch(() => [this.activeTab, this.view, this.curveSeg, this.authed], () => this.scheduleCharts(), { flush: 'post' });
     },
     methods: {
@@ -962,6 +1238,18 @@ const app = createApp({
             }, 450);
         },
         hideTip() { this.tip.show = false; },
+        /* Segment istatistiğini seçili aylar (ms) ve müşteriler (cs) için toplar */
+        statOf(s, ms, cs) {
+            const o = { total: 0, handled: 0, own: 0, up: 0, down: 0, days: 0 }; if (!s) return o;
+            const srcs = cs ? [...cs].map(c => s.c && s.c[c]).filter(Boolean) : [s];
+            srcs.forEach(x => {
+                if (!ms) STAT_KEYS.forEach(q => { o[q] += x[q]; });
+                else ms.forEach(i => { const m = x.m[i]; STAT_KEYS.forEach(q => { o[q] += m[q]; }); });
+            });
+            return o;
+        },
+        /* Bir fiyat tablosunda (segment+müşteri → gün) seçili müşterilerin gün payı */
+        dayShare(pr, cs) { let a = 0, t = 0; for (const k in pr) { const d = pr[k]; t += d; if (cs.has(E.splitKey(k)[1])) a += d; } return t ? a / t : 0; },
         /* Personel sayısı kilidi: açıkken önerilen sayıdan otomatik; elle değiştirince kilitlenir */
         onPersInput(v) { this.settings.personelSayisi = v; if (!this.settings.personelKilit) this.settings.personelKilit = true; },
         togglePersLock() {
@@ -1122,8 +1410,53 @@ const app = createApp({
             this.settings.enflasyonYillari = this.settings.enflasyonYillari.filter(v => v !== y);
             delete this.settings.enflasyonOranlari[y];
             FUELS.forEach(f => delete this.settings.yakitFiyatlari[f][y]);
-            SEGMENTS.forEach(s => delete this.settings.gunlukTutar[s][y]);
-            if (String(this.filters.year) === String(y)) this.filters.year = 'all';
+            SEGMENTS.forEach(s => { delete this.settings.gunlukTutar[s][y]; delete this.settings.tedarikciTutar[s][y]; });
+            Object.values(this.settings.musteriTutar || {}).forEach(m => ['gunluk', 'tedarikci'].forEach(k => SEGMENTS.forEach(sg => { if (m[k] && m[k][sg]) delete m[k][sg][y]; })));
+            this.filters.year = this.filters.year.filter(x => String(x) !== String(y));
+        },
+
+        /* ---- Müşteri bazlı günlük tutarlar ---- */
+        ensureCustEntry(c) {
+            if (!c || !this.authed) return;
+            const mt = this.settings.musteriTutar || (this.settings.musteriTutar = {});
+            if (!mt[c]) mt[c] = fillCustRates({}, this.years);
+        },
+        custOptionLabel(o) {
+            const st = this.custRateStatus[o.c], base = `${o.c} · ${this.formatCurrency(o.files)} dosya`;
+            if (!st) return base;
+            if (!st.ok) return `⚠ ${base} · günlük tutar eksik`;
+            return st.supOk ? `✓ ${base}` : `✓ ${base} · tedarikçi tutarı eksik`;
+        },
+        /* Seçili müşterinin tutarlarını varsayılan tablodan ya da başka bir müşteriden kopyalar */
+        async copyCustRates() {
+            const c = this.gtCust, src = this.gtCopyFrom; if (!c || !src || src === c) return;
+            const from = src === '__default' ? { gunluk: this.settings.gunlukTutar, tedarikci: this.settings.tedarikciTutar } : (this.settings.musteriTutar || {})[src];
+            if (!from) return;
+            const srcName = src === '__default' ? 'varsayılan tutarlar' : `'${src}'`;
+            if (!await this.askConfirm(`'${c}' müşterisinin kendi ve tedarikçi günlük tutarları ${srcName} ile değiştirilecek. Devam edilsin mi?`)) return;
+            this.settings.musteriTutar[c] = fillCustRates(JSON.parse(JSON.stringify({ gunluk: from.gunluk || {}, tedarikci: from.tedarikci || {} })), this.years);
+            this.notify(`${srcName} '${c}' müşterisine kopyalandı`);
+        },
+        /* Seçili müşterinin tutarlarını tutarı eksik olan (veya tüm) müşterilere uygular */
+        async applyCustRatesToAll(onlyMissing) {
+            const c = this.gtCust, e = this.custEntry; if (!c || !e) return;
+            const targets = this.histCustomers.list.map(o => o.c).filter(x => x !== c && (!onlyMissing || !this.custRateStatus[x].ok || !this.custRateStatus[x].supOk));
+            if (!targets.length) { this.notify('Uygulanacak müşteri yok'); return; }
+            if (!await this.askConfirm(`'${c}' müşterisinin tutarları ${onlyMissing ? 'tutarı eksik olan' : 'diğer tüm'} ${targets.length} müşteriye kopyalanacak${onlyMissing ? ' (yalnızca boş hücreler doldurulur)' : ' (mevcut tutarlarının üzerine yazılır)'}. Devam edilsin mi?`)) return;
+            const empty = x => x === null || x === undefined || x === '';
+            targets.forEach(t => {
+                this.ensureCustEntry(t); const d = this.settings.musteriTutar[t];
+                ['gunluk', 'tedarikci'].forEach(k => SEGMENTS.forEach(sg => this.years.forEach(y => {
+                    const v = ((e[k] || {})[sg] || {})[y];
+                    if (!onlyMissing || empty(d[k][sg][y])) d[k][sg][y] = v === undefined ? null : v;
+                })));
+            });
+            this.notify(`${targets.length} müşteriye uygulandı`);
+        },
+        async removeOrphanRates() {
+            const L = this.orphanRates; if (!L.length) return;
+            if (!await this.askConfirm(`Tarihçede artık bulunmayan ${L.length} müşterinin (${L.join(', ')}) günlük tutarları silinecek. Devam edilsin mi?`)) return;
+            L.forEach(c => { delete this.settings.musteriTutar[c]; });
         },
 
         /* ---- Araç ---- */
@@ -1220,12 +1553,12 @@ const app = createApp({
             if (await this.askConfirm('Tüm tarihçe verilerini silmek istediğinize emin misiniz?')) { this.historicalData = []; this.importMsg = ''; this.histPage = 1; }
         },
         /* Yeni yükleme mevcut tarihçeyi siler, yerine yeni verileri yazar */
-        async addRecords(rows) {
+        async addRecords(rows, noCustCol) {
             const { records, bad } = E.rowsToRecords(rows);
             if (!records.length) { this.importMsg = `Yüklenebilir kayıt bulunamadı${bad ? ` (${bad} satır okunamadı: segment/tarih kontrol edin)` : ''}. Mevcut veriler değiştirilmedi.`; return; }
             const seen = new Set(), fresh = [];
             records.forEach(r => {
-                const k = [r.dosyaNo, r.segment, r.teslimat, r.iade].join('|');
+                const k = [r.dosyaNo, r.segment, r.teslimat, r.iade, r.musteri || ''].join('|');
                 if (!seen.has(k)) { seen.add(k); fresh.push(r); }
             });
             const old = this.historicalData.length;
@@ -1233,7 +1566,9 @@ const app = createApp({
                 this.importMsg = 'Yükleme iptal edildi, mevcut veriler korundu.'; return;
             }
             this.historicalData = fresh; this.histPage = 1;
-            this.importMsg = `${fresh.length} kayıt yüklendi` + (old ? ` (önceki ${old} kayıt silindi)` : '') + (records.length - fresh.length ? `, ${records.length - fresh.length} mükerrer satır atlandı` : '') + (bad ? `, ${bad} satır okunamadı (segment/tarih kontrol edin)` : '') + '.';
+            const nc = new Set(fresh.map(r => r.musteri).filter(Boolean)).size, noC = fresh.filter(r => !r.musteri).length;
+            this.importMsg = `${fresh.length} kayıt yüklendi` + (old ? ` (önceki ${old} kayıt silindi)` : '') + (records.length - fresh.length ? `, ${records.length - fresh.length} mükerrer satır atlandı` : '') + (bad ? `, ${bad} satır okunamadı (segment/tarih kontrol edin)` : '') + '.'
+                + (noCustCol ? ' Müşteri sütunu bulunamadı; dosyalar müşteri bilgisi olmadan yüklendi.' : (nc ? ` ${nc} farklı müşteri bulundu` + (noC ? `, ${noC} dosyada müşteri boş` : '') + '. Günlük Tutar sayfasından müşteri tutarlarını girebilirsiniz.' : ''));
         },
         /* Başlıkları kontrol eder; eksik varsa yüklemeyi durdurur ve hangi başlığın bulunamadığını söyler */
         async importTable(table, strict) {
@@ -1242,11 +1577,11 @@ const app = createApp({
                 const miss = E.missingHeaders(table);
                 if (miss.length) {
                     this.importMsg = '';
-                    await this.askConfirm(`Yükleme tamamlanamadı: ${miss.map(m => '"' + m + '"').join(', ')} başlığı bulunamadı. İlk satırda "Dosya Numarası", "Segment", "Araç Teslimat Tarihi" ve "Araç İade Tarihi" sütun başlıkları olmalı. Mevcut veriler değiştirilmedi.`, true);
+                    await this.askConfirm(`Yükleme tamamlanamadı: ${miss.map(m => '"' + m + '"').join(', ')} başlığı bulunamadı. İlk satırda "Dosya Numarası", "Segment", "Müşteri", "Araç Teslimat Tarihi" ve "Araç İade Tarihi" sütun başlıkları olmalı. Mevcut veriler değiştirilmedi.`, true);
                     return;
                 }
             }
-            await this.addRecords(E.tableToRows(table));
+            await this.addRecords(E.tableToRows(table), !headerless && !E.hasCustomerColumn(table));
         },
         handleFileUpload(event) {
             const file = event.target.files[0]; if (!file) return;
@@ -1327,7 +1662,7 @@ const app = createApp({
                 return;
             }
             const snap = this.snapshot();
-            this.settings.scenarios.push({ id: 's' + Date.now(), ad, not, ...snap, filters: { ...this.filters }, tarih: new Date().toISOString(), by: this.auth.user ? this.auth.user.email : '' });
+            this.settings.scenarios.push({ id: 's' + Date.now(), ad, not, ...snap, filters: normFilters(this.filters), tarih: new Date().toISOString(), by: this.auth.user ? this.auth.user.email : '' });
             this.safeHide(this.scenarioModal, 'scenarioModal');
             this.notify(`'${ad}' kaydedildi`);
         },
@@ -1335,7 +1670,7 @@ const app = createApp({
         applyScenario(s) {
             this.vehicles.forEach(v => { v.count = Math.max(0, Math.floor(Number(s.counts[v.id]) || 0)); });
             this.settings.sim = { ...DEFAULT_SIM(), ...s.sim };
-            this.filters = { ...EMPTY_FILTERS(), ...(s.filters || {}) };
+            this.filters = normFilters(s.filters);
             this.notify(`'${s.ad}' uygulandı`);
         },
         async deleteScenario(s) {
@@ -1378,8 +1713,8 @@ const app = createApp({
             const sMod = fn => k => { const st = clone(this.settings); fn(st, k); return [st, baseV, g0]; };
             const opHeads = this.settings.giderTanimlari.filter(h => h.tip !== 'yakit').map(h => h.ad);
             const items = [
-                ['Müşteri günlük tutarı', sMod((st, k) => scaleMap(st.gunlukTutar, k))],
-                ...(this.hasSupplier ? [['Tedarikçi günlük tutarı', sMod((st, k) => scaleMap(st.tedarikciTutar, k))]] : []),
+                ['Müşteri günlük tutarı', sMod((st, k) => { scaleMap(st.gunlukTutar, k); Object.values(st.musteriTutar || {}).forEach(m => scaleMap(m.gunluk, k)); })],
+                ...(this.hasSupplier ? [['Tedarikçi günlük tutarı', sMod((st, k) => { scaleMap(st.tedarikciTutar, k); Object.values(st.musteriTutar || {}).forEach(m => scaleMap(m.tedarikci, k)); })]] : []),
                 ['Araç alış bedeli', vMod((v, k) => { if (v.alisBedeli !== null) v.alisBedeli = Number(v.alisBedeli) * k; })],
                 ['Araç satış tutarı', vMod((v, k) => { if (v.satisTutari !== null) v.satisTutari = Number(v.satisTutari) * k; })],
                 ['Araç işletme giderleri', vMod((v, k) => opHeads.forEach(h => { if (v.giderler[h] !== null && v.giderler[h] !== undefined) v.giderler[h] = Number(v.giderler[h]) * k; }))],
@@ -1403,21 +1738,23 @@ const app = createApp({
         },
         /* Tedarikçiye giden dosyalar: hiç araç verilemeyen ya da o yıl ömrü dışındaki plakaya düşen dosyalar.
            Tedarikçi tutarı girilmemiş segment/yılda dosya kaybedilmiş sayılır. */
-        supplierCalc(R, segKeys, mi, yOk, st) {
-            const S = st || this.settings, sc = R.scale || 1, ts = S.tedarikciTutar || {}, gt = S.gunlukTutar || {};
+        supplierCalc(R, segKeys, ms, yOk, st, cs) {
+            const RT = R.rates, sc = R.scale || 1, mset = ms ? new Set(ms) : null; // R.rates, raporun kurulduğu ayarlardan gelir (duyarlılıkta değiştirilmiş ayarlar)
             const years = R.years.filter(yOk), alive = {};
             R.plates.forEach(p => { alive[p.id] = years.map(y => p.life.includes(y)); });
-            const tab = {}; // segment → [ {r, s} yıl sırasıyla ]
-            const tOf = sg => tab[sg] || (tab[sg] = years.map(y => ({ r: Number((gt[sg] || {})[y]) || 0, s: Number((ts[sg] || {})[y]) || 0 })));
-            const out = { files: 0, lost: 0, days: 0, revenue: 0, cost: 0, margin: 0, byYear: {}, allDays: 0, allCost: 0, ownDays: 0, ownSup: 0, ownCust: 0 };
+            const tab = new Map(); // segment + müşteri → [ {r, s} yıl sırasıyla ]
+            const tOf = (sg, c) => { const k = sg + '\t' + c; let t = tab.get(k); if (!t) { t = years.map(y => ({ r: RT.rate(c, sg, y), s: RT.sup(c, sg, y) })); tab.set(k, t); } return t; };
+            const out = { files: 0, lost: 0, days: 0, revenue: 0, cost: 0, margin: 0, byYear: {}, byCust: {}, allDays: 0, allCost: 0, ownDays: 0, ownSup: 0, ownCust: 0 };
             const by = years.map(() => ({ margin: 0, revenue: 0, cost: 0, days: 0 }));
             R.years.forEach(y => { out.byYear[y] = { margin: 0, revenue: 0, cost: 0, days: 0 }; });
             const segSet = segKeys ? new Set(segKeys) : null, A = R.sim.assign;
             for (let i = 0; i < A.length; i++) {
                 const a = A[i];
                 if (segSet && !segSet.has(a.seg)) continue;
-                if (mi !== null && a.mi !== mi) continue;
-                const al = a.unit ? alive[a.unit] : null, T = tOf(a.seg), Tp = a.kind === 'down' ? tOf(a.given) : T, d = a.days * sc;
+                if (mset && !mset.has(a.mi)) continue;
+                if (cs && !cs.has(a.c)) continue;
+                const al = a.unit ? alive[a.unit] : null, T = tOf(a.seg, a.c), Tp = a.kind === 'down' ? tOf(a.given, a.c) : T, d = a.days * sc;
+                const bc = out.byCust[a.c] || (out.byCust[a.c] = { files: 0, lost: 0, margin: 0, revenue: 0, cost: 0 });
                 let toSup = false, lost = false;
                 for (let j = 0; j < years.length; j++) {
                     const s = T[j].s;
@@ -1427,8 +1764,9 @@ const app = createApp({
                     const r = T[j].r, b = by[j];
                     out.days += d; out.revenue += d * r; out.cost += d * s; out.margin += d * (r - s);
                     b.days += d; b.revenue += d * r; b.cost += d * s; b.margin += d * (r - s); toSup = true;
+                    bc.revenue += d * r; bc.cost += d * s; bc.margin += d * (r - s);
                 }
-                if (toSup) out.files++; else if (lost) out.lost++;
+                if (toSup) { out.files++; bc.files++; } else if (lost) { out.lost++; bc.lost++; }
             }
             years.forEach((y, j) => { out.byYear[y] = by[j]; });
             out.avgSup = out.allDays ? out.allCost / out.allDays : 0;
@@ -1460,6 +1798,60 @@ const app = createApp({
             if (/Gelir|Satış|Gider|Finansman|Personel|Net|Marj/.test(col)) return this.money(v);
             if (/%/.test(col)) return this.pct(v);
             return this.formatCurrency(v);
+        },
+
+        /* Raporlama: müşteri bazlı analiz blokları (müşteri bilgisi varsa) */
+        custBlocks(B, c, nc) {
+            const CV = this.custView, rows = CV.rows; if (!this.hasCustomers || !rows.length) return;
+            const f = this.formatCurrency, sm = this.shortMoney, pc = this.pct, money = this.money, sup = this.hasSupplier, T = CV.tot;
+            const lim = rows.length > 12 ? ' Grafikte ilk 12 müşteri gösterilir; tablo tüm müşterileri içerir.' : '';
+            // Gelir, gider, net
+            const best = rows.reduce((a, r) => (r.net > a.net ? r : a), rows[0]), worst = rows.reduce((a, r) => (r.net < a.net ? r : a), rows[0]);
+            const fcols = ['Müşteri', 'Dosya', 'Gelir', 'Gider', 'Net', 'Kârlılık']; if (sup) fcols.push('Şirket Neti');
+            B.push({ id: 'chCustFin', title: 'Müşteri Bazında Gelir, Gider ve Net', sub: 'Her müşterinin dosyalarından elde edilen gelir (müşterinin kendi günlük tutarıyla), ona düşen araç + personel gideri ve net sonuç. Giderler her araçta müşterinin kiralama günü payıyla dağıtılır.' + lim,
+                insight: `En çok gelir ${rows[0].label} müşterisinden (${sm(rows[0].gelir)}). En kârlı ${best.label} (net ${sm(best.net)})` + (worst.net < 0 ? `, en çok zarar ettiren ${worst.label} (${sm(worst.net)}).` : '.'),
+                cols: fcols, rows: rows.map(r => { const x = [c(r.label, 'text-start fw-bold'), c(f(r.total)), c(sm(r.gelir), 'text-success'), c(sm(r.gider), 'text-danger'), c(sm(r.net), 'fw-bold ' + nc(r.net)), c(pc(r.margin), nc(r.margin))]; if (sup) x.push(c(sm(r.company), nc(r.company))); return x; }),
+                foot: [c('Toplam', 'text-start'), c(f(T.total)), c(sm(T.gelir)), c(sm(T.gider)), c(sm(T.net), nc(T.net)), c(pc(T.margin)), ...(sup ? [c(sm(T.company))] : [])] });
+            // Talep ve karşılama
+            const big = rows.filter(r => r.total >= Math.max(10, T.total * 0.02)), lowR = big.length ? big.reduce((a, r) => (r.ratio < a.ratio ? r : a), big[0]) : null;
+            const ccols = ['Müşteri', 'Talep', 'Karşılanan', 'Üst/Alt Seg.', 'Karşılanamayan', 'Karşılama']; if (sup) ccols.push('Tedarikçiye Giden');
+            B.push({ id: 'chCustCover', title: 'Müşteri Bazında Talep ve Karşılama', sub: 'Her müşterinin dosyalarının ne kadarına kendi filomuzla araç verebildik? Turuncu: kendi segmentinde, mavi: üst/alt segmentle, gri: karşılanamayan.' + lim,
+                insight: lowR ? `Karşılama oranı en düşük büyük müşteri ${lowR.label}: ${pc(lowR.ratio)} (${f(lowR.missed)} dosya karşılanamadı).` : '',
+                cols: ccols, rows: rows.map(r => { const x = [c(r.label, 'text-start fw-bold'), c(f(r.total)), c(f(r.handled)), c(f(r.cross)), c(f(r.missed), r.missed ? 'text-danger' : ''), c(pc(r.ratio), this.ratioClass(r.ratio))]; if (sup) x.push(c(f(r.supFiles))); return x; }),
+                foot: [c('Toplam', 'text-start'), c(f(T.total)), c(f(T.handled)), c(f(T.cross)), c(f(T.missed)), c(pc(T.ratio)), ...(sup ? [c(f(rows.reduce((a, r) => a + r.supFiles, 0)))] : [])] });
+            // Paylar
+            const top3 = [...rows].sort((a, b) => b.total - a.total).slice(0, 3), t3 = top3.reduce((a, r) => a + r.total, 0), g3 = top3.reduce((a, r) => a + r.gelir, 0);
+            const topC = rows.reduce((a, r) => (r.contrib > a.contrib ? r : a), rows[0]);
+            B.push({ id: 'chCustShare', title: 'Müşteri Payları: Talep, Gelir ve Doluluk', sub: 'Grafik: toplam gelirin müşterilere dağılımı. Tablo: her müşterinin talep, gelir ve net içindeki payı ile filo doluluğuna katkısı (müşteriye çalışılan gün ÷ toplam araç günü; toplamı filo doluluk oranıdır).',
+                insight: (rows.length > 3 ? `İlk 3 müşteri (${top3.map(r => r.label).join(', ')}) talebin ${pc(T.total ? t3 / T.total * 100 : 0)}'ini, gelirin ${pc(T.gelir ? g3 / T.gelir * 100 : 0)}'ini oluşturuyor. ` : '') + `Doluluğa en çok katkı ${topC.label}: ${pc(topC.contrib)}.`,
+                cols: ['Müşteri', 'Talep Payı', 'Gelir Payı', 'Net Payı', 'Doluluğa Katkı'],
+                rows: rows.map(r => [c(r.label, 'text-start fw-bold'), c(pc(T.total ? r.total / T.total * 100 : 0)), c(pc(T.gelir ? r.gelir / T.gelir * 100 : 0)), c(T.net ? pc(r.net / Math.abs(T.net) * 100) : '-', nc(r.net)), c(pc(r.contrib))]),
+                foot: [c('Toplam', 'text-start'), c('%100'), c('%100'), c(T.net ? (T.net < 0 ? '-%100' : '%100') : '-'), c(pc(T.contrib))] });
+            // Birim ekonomi
+            const wk = rows.filter(r => r.work > 0), bestU = wk.length ? wk.reduce((a, r) => (r.revDay - r.costDay > a.revDay - a.costDay ? r : a), wk[0]) : null;
+            B.push({ id: 'chCustUnit', title: 'Müşteri Birim Ekonomisi', sub: 'Müşteriye çalışılan gün başına ortalama gelir (müşterinin günlük tutarı) ve maliyet (araç + personel gideri − satış payı). Kâr / gün negatifse o müşteriye kendi aracımızla hizmet vermek zarar ettiriyor.' + lim,
+                insight: bestU ? `Gün başı en kârlı müşteri ${bestU.label}: ${money(bestU.revDay - bestU.costDay)} (gelir ${money(bestU.revDay)}, maliyet ${money(bestU.costDay)}).` : '',
+                cols: ['Müşteri', 'Ort. Kiralama', 'Gelir / gün', 'Maliyet / gün', 'Kâr / gün', 'Net / dosya'],
+                rows: rows.map(r => [c(r.label, 'text-start fw-bold'), c(this.fmt1(r.avgRental) + ' gün'), c(r.work ? money(r.revDay) : '-', 'text-success'), c(r.work ? money(r.costDay) : '-', 'text-danger'), c(r.work ? money(r.revDay - r.costDay) : '-', nc(r.revDay - r.costDay)), c(r.handled ? money(r.netFile) : '-', nc(r.netFile))]) });
+            // Aylık talep (ilk 5 müşteri + diğer)
+            const MM = this.custMonthly;
+            if (MM.series.length && MM.rows.length) {
+                const peak = MM.rows.reduce((a, r) => (r.total > a.total ? r : a), MM.rows[0]), named = MM.other ? MM.series.length - 1 : MM.series.length;
+                const lead = peak.v.slice(0, named).reduce((a, x, i) => (x > peak.v[a] ? i : a), 0);
+                B.push({ id: 'chCustMonth', title: 'Müşteri Bazında Aylık Talep', sub: 'Her ay gelen dosyaların müşterilere dağılımı (talebi en yüksek 5 müşteri ayrı, diğerleri "Diğer"). Bir müşterinin hangi aydan itibaren yük getirdiği burada görünür.',
+                    insight: peak.total ? `En yoğun ay ${MONTHS[peak.mi]} (${f(peak.total)} dosya); bu ayın en büyük payı ${pc(peak.v[lead] / peak.total * 100)} ile ${MM.series[lead]} müşterisinde.` : '',
+                    cols: ['Ay', ...MM.series, 'Toplam'], rows: MM.rows.map(r => [c(MONTHS[r.mi], 'text-start fw-bold'), ...r.v.map(x => c(f(x))), c(f(r.total), 'fw-bold')]),
+                    foot: [c('Toplam', 'text-start'), ...MM.series.map((x, i) => c(f(MM.rows.reduce((a, r) => a + r.v[i], 0)))), c(f(MM.rows.reduce((a, r) => a + r.total, 0)))] });
+            }
+            // Müşteri × segment
+            const SG = this.custSegments;
+            if (SG.segs.length && SG.rows.length) {
+                const r0 = SG.rows[0], i0 = r0.v.reduce((a, x, j) => (x > r0.v[a] ? j : a), 0);
+                B.push({ id: 'chCustSeg', title: 'Müşteri × Segment Talep Dağılımı', sub: 'Her müşterinin hangi segmentlerde araç talep ettiği (dosya sayısı). Filoya hangi segmentten araç eklenmesi gerektiğini müşteri bazında gösterir.' + lim,
+                    insight: `En büyük müşteri ${r0.label}: talebinin ${pc(r0.total ? r0.v[i0] / r0.total * 100 : 0)}'i ${SG.segs[i0]} segmentinde.`,
+                    cols: ['Müşteri', ...SG.segs, 'Toplam'], rows: SG.rows.map(r => [c(r.label, 'text-start fw-bold'), ...r.v.map(x => c(x ? f(x) : '-')), c(f(r.total), 'fw-bold')]),
+                    foot: [c('Toplam', 'text-start'), ...SG.segs.map((x, i) => c(f(SG.rows.reduce((a, r) => a + r.v[i], 0)))), c(f(SG.rows.reduce((a, r) => a + r.total, 0)))] });
+            }
         },
 
         /* ================= Raporlama: Excel ve grafikler ================= */
@@ -1576,6 +1968,40 @@ const app = createApp({
                 { label: 'Teslimat', data: OL.list.map(x => x.del), borderColor: C.dark, pointRadius: 0, borderWidth: 1 },
                 { label: 'İade', data: OL.list.map(x => x.ret), borderColor: C.blue, pointRadius: 0, borderWidth: 1 }
             ] }, options: { interaction: { mode: 'index', intersect: false }, scales: { x: { ticks: { maxTicksLimit: 12 } } } } });
+            // Müşteri grafikleri
+            const CR = this.custView.rows, cut = l => (l.length > 18 ? l.slice(0, 17) + '…' : l);
+            if (this.hasCustomers && CR.length) {
+                const top = CR.slice(0, 12);
+                this.chart('chCustFin', { type: 'bar', data: { labels: top.map(r => cut(r.label)), datasets: [
+                    { label: 'Gelir', data: top.map(r => r.gelir), backgroundColor: C.green },
+                    { label: 'Gider', data: top.map(r => r.gider), backgroundColor: C.red },
+                    { label: 'Net', data: top.map(r => r.net), backgroundColor: C.orange }
+                ] }, options: { plugins: { tooltip: { callbacks: { title: c => top[c[0].dataIndex].label, label: tipMoney.callbacks.label } } }, scales: { y: money } } });
+                const ct = CR.slice(0, 12);
+                this.chart('chCustCover', { type: 'bar', data: { labels: ct.map(r => cut(r.label)), datasets: [
+                    { label: 'Kendi segmenti', data: ct.map(r => r.handled - r.cross), backgroundColor: C.orange, stack: 'c' },
+                    { label: 'Üst / alt segment', data: ct.map(r => r.cross), backgroundColor: C.blue, stack: 'c' },
+                    { label: 'Karşılanamayan', data: ct.map(r => r.missed), backgroundColor: '#dee2e6', stack: 'c' }
+                ] }, options: { indexAxis: 'y', plugins: { tooltip: { callbacks: { title: c => ct[c[0].dataIndex].label } } }, scales: { x: { stacked: true, title: { display: true, text: 'Dosya' } }, y: { stacked: true } } } });
+                const pal = [C.orange, C.dark, C.blue, C.amber, C.purple, C.green, C.red, '#20c997', C.grey];
+                const sh = CR.slice(0, 8), rest = CR.slice(8).reduce((a, r) => a + Math.max(0, r.gelir), 0);
+                const sl = [...sh.map(r => r.label), ...(rest > 0 ? ['Diğer'] : [])], sd = [...sh.map(r => Math.max(0, r.gelir)), ...(rest > 0 ? [rest] : [])], st = sd.reduce((a, b) => a + b, 0);
+                this.chart('chCustShare', { type: 'doughnut', data: { labels: sl, datasets: [{ data: sd, backgroundColor: sl.map((x, i) => pal[i % pal.length]) }] },
+                    options: { cutout: '60%', plugins: { legend: { position: 'right' }, tooltip: { callbacks: { label: c => `${c.label}: ${this.money(c.parsed)} (${this.pct(st ? c.parsed / st * 100 : 0)})` } } } } });
+                const ut = top.filter(r => r.work > 0);
+                this.chart('chCustUnit', { type: 'bar', data: { labels: ut.map(r => cut(r.label)), datasets: [
+                    { label: 'Gelir / gün', data: ut.map(r => r.revDay), backgroundColor: C.green },
+                    { label: 'Maliyet / gün', data: ut.map(r => r.costDay), backgroundColor: C.red }
+                ] }, options: { plugins: { tooltip: { callbacks: { title: c => ut[c[0].dataIndex].label, label: tipMoney.callbacks.label } } }, scales: { y: { min: 0, ticks: { callback: v => this.money(v) } } } } });
+                const MM = this.custMonthly, mpal = [C.orange, C.dark, C.blue, C.amber, C.purple];
+                if (MM.series.length && MM.rows.length) this.chart('chCustMonth', { type: 'bar', data: { labels: MM.rows.map(r => MONTHS[r.mi].slice(0, 3)), datasets: MM.series.map((sname, i) => ({
+                    label: cut(sname), data: MM.rows.map(r => r.v[i]), backgroundColor: MM.other && i === MM.series.length - 1 ? '#ced4da' : mpal[i % mpal.length], stack: 'm' })) },
+                    options: { scales: { x: { stacked: true }, y: { stacked: true, title: { display: true, text: 'Dosya' } } } } });
+                const SG = this.custSegments, spal = [C.orange, C.dark, C.blue, C.amber, C.purple, C.green, C.red, C.grey], sr = SG.rows.slice(0, 12);
+                if (SG.segs.length && sr.length) this.chart('chCustSeg', { type: 'bar', data: { labels: sr.map(r => cut(r.label)), datasets: SG.segs.map((sg, i) => ({
+                    label: sg, data: sr.map(r => r.v[i]), backgroundColor: spal[i % spal.length], stack: 's' })) },
+                    options: { indexAxis: 'y', plugins: { tooltip: { callbacks: { title: c => sr[c[0].dataIndex].label } } }, scales: { x: { stacked: true, title: { display: true, text: 'Dosya' } }, y: { stacked: true } } } });
+            }
             // Senaryolar
             const SC = this.scenarioCompare;
             if (SC.length > 1) this.chart('chScen', { type: 'bar', data: { labels: SC.map(r => r.label), datasets: [
@@ -1587,4 +2013,5 @@ const app = createApp({
 });
 app.component('num-input', NumInput);
 app.component('sort-table', SortTable);
+app.component('multi-select', MultiSelect);
 app.mount('#app');

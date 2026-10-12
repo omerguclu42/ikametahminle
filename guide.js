@@ -100,12 +100,17 @@ window.GUIDE = [
     },
     {
         id: 'tarihce', title: 'Tarihçe (Dosyalar)', icon: 'bi-file-earmark-spreadsheet',
-        intro: 'Simülasyonun dayandığı geçmiş ikame dosyaları. Dosya numarası, segment, araç teslimat tarihi ve araç iade tarihi (saatli) gereklidir.',
+        intro: 'Simülasyonun dayandığı geçmiş ikame dosyaları. Dosya numarası, segment, müşteri, araç teslimat tarihi ve araç iade tarihi (saatli) yüklenir.',
         sections: [
             { h: 'Yükleme', items: [
                 'Excel / CSV yüklenebilir ya da Excel\'den kopyalanıp yapıştırılabilir. İlk satırda başlıklar olmalıdır; eksik başlık varsa yükleme yapılmaz ve hangi başlığın bulunamadığı söylenir.',
                 'Yeni yükleme mevcut tarihçenin yerine geçer (onay istenir). Aynı dosya tekrar ediyorsa bir kez alınır.',
                 'Tam yıllık (365 gün) veri yüklenmesi önerilir; daha kısa veride çalışılan gün ve gelir yalnızca o dönemi kapsar.'
+            ] },
+            { h: 'Müşteri', items: [
+                'Müşteri sütunu isteğe bağlıdır; yoksa dosyalar müşterisiz yüklenir ve varsayılan günlük tutarlar kullanılır.',
+                'Bir müşteri birçok dosyada geçebilir; müşteriler tekrarsız listelenir. Büyük / küçük harf ve fazla boşluk farkı aynı müşteri sayılır (ilk görülen yazılış kullanılır).',
+                'Müşteri listesi Günlük Tutar sayfasında, simülatör ve raporlama filtrelerinde ve müşteri bazlı tablolarda kullanılır.'
             ] },
             { h: 'Kiralama günü', items: [
                 'Tam 24 saatler sayılır; kalan süre 3 saatten fazlaysa 1 gün eklenir (en az 1 gün). Örnek: 12:00 teslim, ertesi gün 15:00 iade = 1 gün; 15:01 iade = 2 gün.'
@@ -124,10 +129,17 @@ window.GUIDE = [
     },
     {
         id: 'gunlukTutar', title: 'Günlük Tutar ve Tedarikçi', icon: 'bi-cash-coin',
-        intro: 'Müşteriye yansıtılan günlük kira tutarı ve tedarikçiye ödenen günlük tutar segment ve yıla göre girilir.',
+        intro: 'Müşteriye yansıtılan günlük kira tutarı ve tedarikçiye ödenen günlük tutar müşteri, segment ve yıla göre girilir.',
         sections: [
+            { h: 'Müşteri bazlı tutarlar', items: [
+                'Tarihçedeki müşteriler listeden seçilir; her müşteri için segment × yıl bazında kendi günlük tutarı ve tedarikçi günlük tutarı girilir.',
+                'Müşterinin talep ettiği segmentler turuncu işaretlidir (dosya sayısıyla). Eksik zorunlu hücreler kırmızı görünür ve sayfanın üstünde tutarı eksik müşteriler listelenir.',
+                'Müşteride boş bırakılan hücrede varsayılan tutar kullanılır; varsayılan da boşsa gelir 0 hesaplanır. Tarihçede müşteri bilgisi yoksa sayfa uyarı verir ve yalnızca varsayılan tutarlar kullanılır.',
+                '"Tutarları kopyala" ile varsayılan tutarlar ya da başka bir müşterinin tutarları seçili müşteriye alınır; "Diğer müşterilere uygula" ile seçili müşterinin tutarları eksik hücrelere ya da tüm müşterilere yazılır.'
+            ] },
             { h: 'Müşteri günlük tutarı', items: [
-                'Dosya geliri = aracın çalıştığı gün × dosyanın segmentinin o yılki günlük tutarı.',
+                'Dosya geliri = aracın çalıştığı gün × dosyanın müşterisinin, o segment ve yıldaki günlük tutarı.',
+                'Filo büyüklüğü eğrisi ve en kârlı filo segment düzeyinde çalışır; bunlarda segmentin günlük tutarı, segmentteki talebin müşteri dağılımıyla (kiralama günü) ağırlıklı ortalamadır.',
                 'Üst segment araç verilirse talep edilen segmentin, alt segment araç verilirse verilen segmentin tutarı alınır.'
             ] },
             { h: 'Tedarikçi günlük tutarı', items: [
@@ -158,8 +170,10 @@ window.GUIDE = [
             ] },
             { h: 'Kartlar ve tablolar', items: [
                 'Her kartın sağ üstündeki ⓘ ikonunun üzerine gelince o kartın nasıl hesaplandığı gerçek rakamlarla gösterilir.',
-                'Filtreler: Yıl, Ay (teslim ayı), Segment, Marka. Ay seçiliyken yıllık giderler ayın gün sayısına oranlanır, araç satışı dahil edilmez.',
-                'Detay tablolarında (Yıllık Özet, Segment, Araç Modeli, Gider Dağılımı, Plaka Detayı, Ay Detayı) sütun başlığına tıklayınca sıralanır.'
+                'Filtreler: Yıl, Ay (teslim ayı), Segment, Marka Model, Müşteri. Her filtre açılır listeden çoktan seçmelidir (tıklayarak birden çok seçilir, "yalnız" ile tek seçim, "Temizle" ile Tümü). Ay seçiliyken yıllık giderler seçili ayların gün sayısına oranlanır, araç satışı dahil edilmez.',
+                'Müşteri seçiliyken: talep ve karşılama o müşterilerin dosyalarından; gelir o müşterilerin dosyalarından kendi günlük tutarlarıyla; araç gideri, personel gideri, satış ve çalışılan / boşta gün her araçta seçili müşterilerin kiralama günü payıyla hesaplanır. Böylece tüm müşterilerin toplamı filtresiz sonuca eşittir.',
+                'Detay tablolarında (Yıllık Özet, Segment, Müşteri, Araç Modeli, Gider Dağılımı, Plaka Detayı, Ay Detayı) sütun başlığına tıklayınca sıralanır.',
+                'Müşteri tablosu: dosya, karşılanan, karşılama oranı, kiralama günü, doluluğa katkı (müşteriye çalışılan gün ÷ filodaki toplam araç günü), gelir, gider, net ve kârlılık (net ÷ gelir); tedarikçi tutarı varsa tedarikçi marjı ve şirket neti.'
             ] }
         ]
     },
@@ -175,6 +189,7 @@ window.GUIDE = [
                 'Filo Büyüklüğü – Karşılama – Kâr: segmentte araç sayısı arttıkça karşılama oranı ve net nasıl değişir; en kârlı nokta.',
                 'Duyarlılık Analizi: günlük tutar, tedarikçi tutarı, alış / satış bedeli, giderler, yakıt, personel, enflasyon ve hizmet sayısı değişince şirket netinin ne kadar değiştiği; en etkili varsayım en üstte.',
                 'Model Karar Tablosu: her modelin gün başı geliri, maliyeti ve tedarikçiye göre avantajı.',
+                'Müşteri analizleri (müşteri bilgisi varsa): müşteri bazında gelir-gider-net, talep ve karşılama, talep / gelir / doluluk payları, birim ekonomi (gün başı gelir, maliyet, kâr), aylık talep dağılımı ve müşteri × segment talep matrisi.',
                 'Detaylı Veri Seti: dosya ya da plaka-yıl bazında tüm veriler; Excel\'e aktarılabilir.'
             ] }
         ]
