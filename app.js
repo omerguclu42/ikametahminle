@@ -324,7 +324,7 @@ const app = createApp({
             auth: { state: 'loading', error: '', busy: false, email: '', password: '', user: null },
             sync: { status: 'idle', msg: '', loaded: false, online: true },
             costClip: null, // kopyalanan gider ve performans verileri
-            tip: { show: false, text: '', x: 0, y: 0, up: false },
+            tip: { show: false, text: '', x: 0, y: 0, up: false, w: 340 },
             showPass: false, photoKey: 0, costTypes: E.COST_TYPES,
             toast: { show: false, text: '' },
 
@@ -420,8 +420,8 @@ const app = createApp({
                     const cy = b.op + b.pers + capex / L;
                     o.op += b.op; o.pers += b.pers; o.capex += capex / L; o.cost += cy; o.days += d; o.plates++;
                     // müşterinin bu araçtaki kiralama günü payı kadar gider (simülatör Müşteri sekmesiyle aynı dağıtım)
-                    mine.forEach(([sg, dk]) => { const sh = raw ? dk / raw : 0, C = cust[sg] || (cust[sg] = {}), q = C[y] || (C[y] = { days: 0, cost: 0, op: 0, pers: 0, capex: 0 });
-                        q.days += dk * sc; q.cost += cy * sh; q.op += b.op * sh; q.pers += b.pers * sh; q.capex += capex / L * sh; });
+                    mine.forEach(([sg, dk]) => { const sh = raw ? dk / raw : 0, C = cust[sg] || (cust[sg] = {}), q = C[y] || (C[y] = { days: 0, cost: 0, op: 0, pers: 0, capex: 0, plates: 0 });
+                        q.days += dk * sc; q.cost += cy * sh; q.op += b.op * sh; q.pers += b.pers * sh; q.capex += capex / L * sh; q.plates++; });
                 });
             });
             const st = R.sim.segStats, avgAll = {};
@@ -436,6 +436,7 @@ const app = createApp({
                 const days = q ? q.days : 0, src = q && q.days > 0 ? q : (o && o.days > 0 ? o : null);
                 const rate = rateOf(sg, y), cd = src ? src.cost / src.days : null;
                 const r = { sg, y, rate, costDay: cd, avgDays, handled, days, hasFleet: cd !== null, plates: o ? o.plates : 0, own: !!(q && q.days > 0),
+                    src: src ? { cost: src.cost, op: src.op, pers: src.pers, capex: src.capex, days: src.days, plates: src.plates } : null, segDay: o && o.days > 0 ? o.cost / o.days : null,
                     breakdown: src ? { op: src.op / src.days, pers: src.pers / src.days, capex: src.capex / src.days } : null };
                 if (rate !== null && cd !== null) {
                     r.profitDay = rate - cd; r.margin = rate ? r.profitDay / rate * 100 : 0; r.room = rate ? (rate - cd) / rate * 100 : 0;
@@ -454,6 +455,34 @@ const app = createApp({
                 return t;
             });
             return { segs, grid, yearsRows, turn, tot };
+        },
+        /* Günlük Tutar fiyat analizi kartlarının "nasıl hesaplandı" notları (seçili hücrenin gerçek rakamlarıyla) */
+        priceTips() {
+            const S = this.selCell; if (!S) return {};
+            const m = this.money, f = this.formatCurrency, d1 = this.fmt1, cl = this.gtCust || NO_CUST_LABEL, u = S.src, has = S.rate !== null && S.costDay !== null;
+            const who = `${cl} · ${S.sg} segmenti · ${S.y}`;
+            const why = 'Farklı müşterilerde farklı çıkabilir, çünkü her müşterinin maliyeti ona fiilen çalışan araçlardan gelir:\n' +
+                '• Personel gideri araçlara aldıkları DOSYA sayısı oranında dağıtılır; kiralama süresi kısa olan müşteri gün başına daha çok personel payı taşır.\n' +
+                '• Dosya, teslim anında boşta olan en düşük giderli araca verilir; müşterinin dosyaları hangi modellere / ne kadar dolu araçlara düştüyse onların maliyetini taşır.\n' +
+                '• Araç gideri o araçtaki kiralama günü payıyla dağıtılır; doluluğu düşük araca düşen müşteri gün başına daha çok gider taşır.';
+            return {
+                rate: `${who}\nBu hücreye girdiğiniz Eurocross Turkey günlük tutarı (müşteriye bir kiralama günü için yansıtılan).\nDosya geliri = kiralama günü (tam gün) × bu tutar.`,
+                cost: !u ? `${who}\nBu segment / yılda filoda aktif araç olmadığı için maliyet hesaplanamıyor.` :
+                    `${who}\nBir kiralama gününün bize maliyeti; günlük tutar bunun altındaysa zarar edilir.\n` +
+                    (S.own ? `Bu müşterinin dosyalarına çalışan ${f(u.plates)} aracın, müşterinin o araçlardaki kiralama günü payı kadar gideri:` : `Bu müşteriye bu segment / yılda araç çalışmadı; segmentteki ${f(u.plates || S.plates)} aracın ortalaması kullanıldı:`) +
+                    `\n  İşletme ${m(u.op)} + personel ${m(u.pers)} + (alış + faiz − satış) ÷ ömür ${m(u.capex)} = ${m(u.cost)}\n  ÷ ${f(u.days)} kiralama günü = ${m(S.costDay)}` +
+                    (S.segDay !== null && S.own ? `\nKarşılaştırma: segmentteki tüm filonun ortalaması ${m(S.segDay)}.` : '') + '\n\n' + why,
+                profit: has ? `${who}\nGünlük kâr = günlük tutar − gün başı maliyet\n${m(S.rate)} − ${m(S.costDay)} = ${m(S.profitDay)}\nKâr marjı = günlük kâr ÷ günlük tutar = ${this.pct(S.margin)}` : 'Günlük tutar girildiğinde: günlük tutar − gün başı maliyet.',
+                room: has ? `${who}\n` + (S.profitDay >= 0 ? `Tutar en fazla bu oranda düşürülürse hâlâ zarar edilmez:\n(günlük tutar − başabaş) ÷ günlük tutar = (${m(S.rate)} − ${m(S.costDay)}) ÷ ${m(S.rate)} = %${d1(S.room)}` : `Zarardan çıkmak için tutarın bu oranda artırılması gerekir:\nbaşabaş ÷ günlük tutar − 1 = ${m(S.costDay)} ÷ ${m(S.rate)} − 1 = %${d1((S.costDay / S.rate - 1) * 100)}`) : 'Günlük tutar girildiğinde: başabaş tutara göre indirim payı ya da gereken zam.',
+                avg: `${who}\nBu müşterinin ${S.sg} segmentindeki ${S.handled ? 'kendi filomuzla karşılanan' : ''} dosyalarının ortalama kiralama günü (24 saat + 3 saati aşan kalan 1 gün kuralıyla).\n${d1(S.avgDays)} gün`,
+                fileRev: has ? `${who}\nDosya başı gelir = ortalama kiralama süresi × günlük tutar\n${d1(S.avgDays)} gün × ${m(S.rate)} = ${m(S.fileRev)}` : 'Günlük tutar girildiğinde: ortalama kiralama süresi × günlük tutar.',
+                fileCost: S.costDay !== null ? `${who}\nDosya başı gider = ortalama kiralama süresi × gün başı maliyet\n${d1(S.avgDays)} gün × ${m(S.costDay)} = ${m(S.costDay * S.avgDays)}` : 'Maliyet hesaplanamıyor (filoda araç yok).',
+                fileProfit: has ? `${who}\nDosya başı kâr = dosya başı gelir − dosya başı gider\n${m(S.fileRev)} − ${m(S.costDay * S.avgDays)} = ${m(S.fileProfit)}` : 'Günlük tutar girildiğinde: dosya başı gelir − dosya başı gider.',
+                year: `${who}\nBu müşterinin ${S.sg} dosyalarından kendi filomuzla karşılananlar (simülatördeki filoya göre):\n${f(S.handled)} dosya, ${f(S.days)} kiralama günü\nGelir = gün × günlük tutar${has ? ' = ' + m(S.rev) : ''}\nGider = gün × gün başı maliyet${S.costDay !== null ? ' = ' + m(S.days * S.costDay) : ''}\nNet = gelir − gider${has ? ' = ' + m(S.profit) : ''}`,
+                scen: `Seçili hücrede günlük tutar değişirse (maliyet aynı kalır):\nGünlük kâr = tutar − gün başı maliyet\nDosya başı kâr = günlük kâr × ortalama kiralama süresi (${d1(S.avgDays)} gün)\nYıllık net = günlük kâr × bu müşterinin ${S.y} yılı ${S.sg} kiralama günü (${f(S.days)})\nİlk satır başabaş tutardır (kâr 0).`,
+                forecast: `${cl} için her yıl, müşterinin tüm segmentlerdeki kendi filomuzla karşılanan dosyaları:\nGelir = Σ kiralama günü × o segment / yılın günlük tutarı\nGider = Σ kiralama günü × gün başı maliyet (müşteriye çalışan araçların, müşterinin günü payıyla gideri; alış + faiz − satış araç ömrüne eşit dağıtılır)\nNet = gelir − gider; kümülatif net yıllar toplanarak ilerler, ilk pozitif olduğu yıl "kâra geçiş".\nToplamlar simülatördeki Müşteri sekmesiyle aynıdır.`,
+                grid: `Her hücre: girilen günlük tutar / başabaş tutar (gün başı maliyet) ve gün başı kâr.\nYeşil: tutar başabaşın üzerinde (kâr), kırmızı: altında (zarar).\n"Filoda araç yok": simülatörde bu segmentten o yıl aktif araç yok.\nHücreye tıklayınca yukarıdaki analiz o hücreye geçer.`
+            };
         },
         /* Seçili hücre (varsayılan: müşterinin ilk segmenti, ilk yıl) */
         selCell() {
@@ -1282,9 +1311,10 @@ const app = createApp({
             this.tip = { show: true, text, x, y: up ? r.top - 8 : r.bottom + 8, up };
         },
         showTipText(e, text) {
-            const r = e.currentTarget.getBoundingClientRect(), W = 340;
-            const x = Math.max(8, Math.min(window.innerWidth - W - 8, r.left + r.width / 2 - W / 2)), up = r.bottom + 220 > window.innerHeight;
-            this.tip = { show: true, text, x, y: up ? r.top - 8 : r.bottom + 8, up };
+            if (!text) return;
+            const r = e.currentTarget.getBoundingClientRect(), W = text.length > 450 ? 480 : 340, need = Math.min(600, text.length * (W > 340 ? 0.42 : 0.6) + 40);
+            const x = Math.max(8, Math.min(window.innerWidth - W - 8, r.left + r.width / 2 - W / 2)), up = r.bottom + need > window.innerHeight && r.top > need * 0.6;
+            this.tip = { show: true, text, x, y: up ? r.top - 8 : r.bottom + 8, up, w: W };
         },
         margOf(v) { return this.margBusy || !(v.id in this.margData) ? null : this.margData[v.id]; },
         marginalTip(v) {

@@ -396,3 +396,8 @@ tr.cursor-pointer:hover { background: #fff4ec; }
 .pl-table tr.pl-be td { background: #f8f9fa; font-style: italic; }
 .pl-table tr.pl-turn td { background: #ebfbee; }
 @media (max-width: 1500px) { .pl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.pl-kpi { position: relative; }
+.pl-kpi span { padding-right: 18px; }
+.pl-kpi .kpi-info { top: 7px; right: 8px; font-size: .82rem; }
+.h-info { color: #adb5bd; cursor: help; font-size: .85rem; }
+.h-info:hover { color: #ff6600; }

@@ -449,23 +449,23 @@
                                     <div class="alert alert-warning py-2 small mb-2" v-if="!selCell.hasFleet">Simülatördeki filoda {{ selCell.sg }} segmentinden {{ selCell.y }} yılında aktif araç yok; maliyet hesaplanamıyor. Tahminleme Simülatörü'nde bu segmente araç ekleyin.</div>
                                     <div class="alert alert-light border py-2 small mb-2" v-else-if="selCell.rate === null">Bu hücreye henüz tutar girilmedi. Başabaş tutar <b>{{ money(selCell.costDay) }}</b>; bunun üzerindeki her tutar kâr getirir.</div>
                                     <div class="pl-grid">
-                                        <div class="pl-kpi"><span>Günlük Tutar</span><b>{{ selCell.rate === null ? '-' : money(selCell.rate) }}</b></div>
-                                        <div class="pl-kpi"><span>Gün Başı Maliyet (başabaş)</span><b class="text-danger">{{ selCell.costDay === null ? '-' : money(selCell.costDay) }}</b></div>
-                                        <div class="pl-kpi hl"><span>Günlük Kâr</span><b :class="selCell.profitDay === undefined ? '' : netClass(selCell.profitDay)">{{ selCell.profitDay === undefined ? '-' : money(selCell.profitDay) }}</b><small v-if="selCell.profitDay !== undefined">kâr marjı {{ pct(selCell.margin) }}</small></div>
-                                        <div class="pl-kpi"><span>Başabaşa Göre</span><b :class="selCell.profitDay === undefined ? '' : netClass(selCell.profitDay)">{{ selCell.profitDay === undefined ? '-' : (selCell.profitDay >= 0 ? '%' + fmt1(selCell.room) + ' indirim payı' : '%' + fmt1((selCell.costDay / selCell.rate - 1) * 100) + ' zam gerekli') }}</b></div>
-                                        <div class="pl-kpi"><span>Ort. Kiralama Süresi</span><b>{{ fmt1(selCell.avgDays) }} gün</b><small>bu müşterinin {{ selCell.sg }} dosyaları</small></div>
-                                        <div class="pl-kpi"><span>Dosya Başı Gelir</span><b class="text-success">{{ selCell.fileRev === undefined ? '-' : money(selCell.fileRev) }}</b></div>
-                                        <div class="pl-kpi"><span>Dosya Başı Gider</span><b class="text-danger">{{ selCell.costDay === null ? '-' : money(selCell.costDay * selCell.avgDays) }}</b></div>
-                                        <div class="pl-kpi hl"><span>Dosya Başı Kâr</span><b :class="selCell.fileProfit === undefined ? '' : netClass(selCell.fileProfit)">{{ selCell.fileProfit === undefined ? '-' : money(selCell.fileProfit) }}</b></div>
+                                        <div class="pl-kpi"><span>Günlük Tutar</span><i class="bi bi-info-circle kpi-info" @mouseenter="showTipText($event, priceTips.rate)" @mouseleave="hideTip" @click="showTipText($event, priceTips.rate)"></i><b>{{ selCell.rate === null ? '-' : money(selCell.rate) }}</b></div>
+                                        <div class="pl-kpi"><span>Gün Başı Maliyet (başabaş)</span><i class="bi bi-info-circle kpi-info" @mouseenter="showTipText($event, priceTips.cost)" @mouseleave="hideTip" @click="showTipText($event, priceTips.cost)"></i><b class="text-danger">{{ selCell.costDay === null ? '-' : money(selCell.costDay) }}</b></div>
+                                        <div class="pl-kpi hl"><span>Günlük Kâr</span><i class="bi bi-info-circle kpi-info" @mouseenter="showTipText($event, priceTips.profit)" @mouseleave="hideTip" @click="showTipText($event, priceTips.profit)"></i><b :class="selCell.profitDay === undefined ? '' : netClass(selCell.profitDay)">{{ selCell.profitDay === undefined ? '-' : money(selCell.profitDay) }}</b><small v-if="selCell.profitDay !== undefined">kâr marjı {{ pct(selCell.margin) }}</small></div>
+                                        <div class="pl-kpi"><span>Başabaşa Göre</span><i class="bi bi-info-circle kpi-info" @mouseenter="showTipText($event, priceTips.room)" @mouseleave="hideTip" @click="showTipText($event, priceTips.room)"></i><b :class="selCell.profitDay === undefined ? '' : netClass(selCell.profitDay)">{{ selCell.profitDay === undefined ? '-' : (selCell.profitDay >= 0 ? '%' + fmt1(selCell.room) + ' indirim payı' : '%' + fmt1((selCell.costDay / selCell.rate - 1) * 100) + ' zam gerekli') }}</b></div>
+                                        <div class="pl-kpi"><span>Ort. Kiralama Süresi</span><i class="bi bi-info-circle kpi-info" @mouseenter="showTipText($event, priceTips.avg)" @mouseleave="hideTip" @click="showTipText($event, priceTips.avg)"></i><b>{{ fmt1(selCell.avgDays) }} gün</b><small>bu müşterinin {{ selCell.sg }} dosyaları</small></div>
+                                        <div class="pl-kpi"><span>Dosya Başı Gelir</span><i class="bi bi-info-circle kpi-info" @mouseenter="showTipText($event, priceTips.fileRev)" @mouseleave="hideTip" @click="showTipText($event, priceTips.fileRev)"></i><b class="text-success">{{ selCell.fileRev === undefined ? '-' : money(selCell.fileRev) }}</b></div>
+                                        <div class="pl-kpi"><span>Dosya Başı Gider</span><i class="bi bi-info-circle kpi-info" @mouseenter="showTipText($event, priceTips.fileCost)" @mouseleave="hideTip" @click="showTipText($event, priceTips.fileCost)"></i><b class="text-danger">{{ selCell.costDay === null ? '-' : money(selCell.costDay * selCell.avgDays) }}</b></div>
+                                        <div class="pl-kpi hl"><span>Dosya Başı Kâr</span><i class="bi bi-info-circle kpi-info" @mouseenter="showTipText($event, priceTips.fileProfit)" @mouseleave="hideTip" @click="showTipText($event, priceTips.fileProfit)"></i><b :class="selCell.fileProfit === undefined ? '' : netClass(selCell.fileProfit)">{{ selCell.fileProfit === undefined ? '-' : money(selCell.fileProfit) }}</b></div>
                                     </div>
                                     <div class="small text-muted mt-2" v-if="selCell.breakdown">Gün başı maliyet = işletme {{ money(selCell.breakdown.op) }} + personel {{ money(selCell.breakdown.pers) }} + alış / faiz − satış {{ money(selCell.breakdown.capex) }} (araç ömrüne eşit dağıtılmış) · {{ selCell.plates }} araç</div>
                                     <div class="pl-year mt-2" v-if="selCell.handled">
-                                        <b>{{ selCell.y }} tahmini ({{ selCell.sg }}, kendi filomuzla):</b> {{ formatCurrency(selCell.handled) }} dosya · {{ formatCurrency(selCell.days) }} kiralama günü ·
+                                        <b>{{ selCell.y }} tahmini ({{ selCell.sg }}, kendi filomuzla):</b> <i class="bi bi-info-circle h-info" @mouseenter="showTipText($event, priceTips.year)" @mouseleave="hideTip" @click="showTipText($event, priceTips.year)"></i> {{ formatCurrency(selCell.handled) }} dosya · {{ formatCurrency(selCell.days) }} kiralama günü ·
                                         gelir <span class="text-success">{{ shortMoney(selCell.rev || 0) }}</span> · gider <span class="text-danger">{{ shortMoney(selCell.cost || 0) }}</span> ·
                                         net <b :class="netClass(selCell.profit || 0)">{{ shortMoney(selCell.profit || 0) }}</b>
                                     </div>
                                     <div class="pl-year mt-2 text-muted" v-else>Bu müşterinin {{ selCell.sg }} dosyalarından kendi filomuzla karşılanan yok (simülatördeki filoya göre).</div>
-                                    <h6 class="small fw-bold mt-3 mb-1">Tutar değişirse</h6>
+                                    <h6 class="small fw-bold mt-3 mb-1">Tutar değişirse <i class="bi bi-info-circle h-info" @mouseenter="showTipText($event, priceTips.scen)" @mouseleave="hideTip" @click="showTipText($event, priceTips.scen)"></i></h6>
                                     <table class="table table-sm mb-0 text-end pl-table" v-if="selCell.costDay !== null">
                                         <thead><tr><th class="text-start">Günlük tutar</th><th>Günlük kâr</th><th>Kâr marjı</th><th>Dosya başı kâr</th><th>{{ selCell.y }} net (bu segment)</th></tr></thead>
                                         <tbody>
@@ -484,7 +484,7 @@
                         </div>
 
                         <template v-if="priceLab && priceLab.segs.length">
-                            <h6 class="text-orange mt-4">Yıllara Göre Forecast · {{ gtInfo.c || noCustLabel }} <small class="text-muted fw-normal">· kendi filomuzla karşılanan dosyalar, girilen tutarlarla</small></h6>
+                            <h6 class="text-orange mt-4">Yıllara Göre Forecast · {{ gtInfo.c || noCustLabel }} <i class="bi bi-info-circle h-info" @mouseenter="showTipText($event, priceTips.forecast)" @mouseleave="hideTip" @click="showTipText($event, priceTips.forecast)"></i> <small class="text-muted fw-normal">· kendi filomuzla karşılanan dosyalar, girilen tutarlarla</small></h6>
                             <div class="table-responsive">
                                 <table class="table table-sm text-end mb-0 pl-table">
                                     <thead class="table-light"><tr><th class="text-start">Yıl</th><th>Karşılanan Dosya</th><th>Kiralama Günü</th><th>Ort. Günlük Tutar</th><th>Gün Başı Maliyet</th><th>Gelir</th><th>Gider</th><th>Net</th><th>Kârlılık</th><th>Kümülatif Net</th></tr></thead>
@@ -507,7 +507,7 @@
                                 <i class="bi" :class="priceLab.turn ? 'bi-graph-up-arrow' : 'bi-graph-down-arrow'"></i>
                                 {{ priceLab.turn ? 'Bu müşteri, girilen tutarlarla kümülatif olarak ' + priceLab.turn + ' yılında kâra geçiyor.' : 'Bu müşteri, girilen tutarlarla tanımlı yıllar içinde kümülatif olarak kâra geçmiyor.' }}</div>
 
-                            <h6 class="text-orange mt-4">Segment × Yıl Başabaş Tablosu <small class="text-muted fw-normal">· girilen tutar / başabaş tutar ve gün başı kâr</small></h6>
+                            <h6 class="text-orange mt-4">Segment × Yıl Başabaş Tablosu <i class="bi bi-info-circle h-info" @mouseenter="showTipText($event, priceTips.grid)" @mouseleave="hideTip" @click="showTipText($event, priceTips.grid)"></i> <small class="text-muted fw-normal">· girilen tutar / başabaş tutar ve gün başı kâr</small></h6>
                             <div class="table-responsive">
                                 <table class="table table-sm text-end mb-0 pl-table">
                                     <thead class="table-light"><tr><th class="text-start">Segment</th><th v-for="y in years" :key="y">{{ y }}</th></tr></thead>
@@ -931,7 +931,7 @@
         <button class="present-exit no-print" v-if="present" @click="present = false"><i class="bi bi-fullscreen-exit"></i> Sunum modundan çık (Esc)</button>
 
         <!-- Kart açıklaması -->
-        <div class="kpi-tip" v-if="tip.show" :class="{up: tip.up}" :style="{left: tip.x + 'px', top: tip.y + 'px'}">{{ tip.text }}</div>
+        <div class="kpi-tip" v-if="tip.show" :class="{up: tip.up}" :style="{left: tip.x + 'px', top: tip.y + 'px', width: (tip.w || 340) + 'px'}">{{ tip.text }}</div>
 
         <!-- Kaydedildi bildirimi -->
         <div class="app-toast" :class="{show: toast.show}"><i class="bi bi-check-circle-fill me-2"></i>{{ toast.text }} ✓</div>
