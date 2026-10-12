@@ -547,7 +547,9 @@
             const byYear = {}, soldYear = ct.sold ? ct.life[ct.life.length - 1] : null;
             if (soldYear === null) unsold.add(u.v.markaModel);
             ct.life.forEach(y => {
-                const revenue = revOf(st.price, y) * cap, sale = y === soldYear ? num(u.v.satisTutari) : 0;
+                // Gelir: her dosyanın tüm kiralama günü (24 saat + 3 saat kuralıyla tam gün), dosyanın başladığı yılın tutarıyla.
+                // Yıl sonuna sarkan dosya (ör. 25 Aralık – 2 Ocak) da tamamen başladığı yıla ve teslimat ayına yazılır; 365 günle kırpılmaz.
+                const revenue = revOf(st.price, y), sale = y === soldYear ? num(u.v.satisTutari) : 0;
                 const op = ct.opTotals[y], buy = ct.buyTotals[y], int = ct.intTotals[y], cost = op + buy + int;
                 const mRev = st.m.map(m => revOf(m.price, y));
                 byYear[y] = { work, idle, revenue, sale, op, buy, int, cost, pers: 0, persShare: 0, net: revenue + sale - cost, mRev };

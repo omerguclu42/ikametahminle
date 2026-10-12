@@ -550,7 +550,7 @@ const app = createApp({
                     const pc = PC.get(p.id), sh = pc.tot ? sumC(pc.cd) / pc.tot : 0;
                     ['work', 'idle', 'sale', 'op', 'buy', 'int', 'pers'].forEach(k => { o[k] *= sh; });
                     let rev = 0; for (const k in pc.keys) { const [sg, c] = E.splitKey(k); if (cs.has(c)) rev += pc.keys[k] * sc * RT.rate(c, sg, y); }
-                    o.revenue = rev * (ms ? 1 : p.cap); o.f = sumC(pc.cf) * sc;
+                    o.revenue = rev; o.f = sumC(pc.cf) * sc;
                 }
                 o.cost = o.op + o.buy + o.int; o.net = o.revenue + o.sale - o.cost - o.pers;
                 return o;
@@ -560,7 +560,7 @@ const app = createApp({
                 const r = p.byYear[y]; if (!cs) return { ...r, f: p.files };
                 let a = 0, t = 0, rev = 0;
                 for (const k in p.price) { const d = p.price[k], [sg, c] = E.splitKey(k); t += d; if (cs.has(c)) { a += d; rev += d * sc * RT.rate(c, sg, y); } }
-                const sh = t ? a / t : 0, o = { work: r.work * sh, idle: r.idle * sh, revenue: rev * p.cap, sale: r.sale * sh, op: r.op * sh, buy: r.buy * sh, int: r.int * sh, pers: r.pers * sh, f: 0 };
+                const sh = t ? a / t : 0, o = { work: r.work * sh, idle: r.idle * sh, revenue: rev, sale: r.sale * sh, op: r.op * sh, buy: r.buy * sh, int: r.int * sh, pers: r.pers * sh, f: 0 };
                 o.cost = o.op + o.buy + o.int; o.net = o.revenue + o.sale - o.cost - o.pers; return o;
             };
             const total = z(), yearAgg = {}, yearFull = {}, segAgg = {}, modelAgg = {}, items = {}, cats = {}, plateRows = [], monthWork = Array(12).fill(0), monthCap = Array(12).fill(0);
@@ -704,7 +704,7 @@ const app = createApp({
                     capTotal += work + idle;
                     if (!pc.tot) return;
                     for (const c in pc.cd) { const a = A.get(c); if (!a) continue; const sh = pc.cd[c] / pc.tot; a.work += work * sh; a.sale += sale * sh; a.cost += cost * sh; a.pers += pers * sh; }
-                    for (const k in pc.keys) { const [sg, c] = E.splitKey(k), a = A.get(c); if (a) a.revenue += pc.keys[k] * sc * RT.rate(c, sg, y) * (ms ? 1 : p.cap); }
+                    for (const k in pc.keys) { const [sg, c] = E.splitKey(k), a = A.get(c); if (a) a.revenue += pc.keys[k] * sc * RT.rate(c, sg, y); }
                 });
                 for (const c in pc.cf) { const a = A.get(c); if (a) a.files += pc.cf[c] * sc; }
             });
@@ -928,7 +928,7 @@ const app = createApp({
             const fs = V.files, k = V.cmp || {}, gider = t.cost + t.pers;
             return {
                 'Araç Satış Geliri': `Optimum satış yılını dolduran araçların satış tutarı, satış yılında gelir yazılır.\nAraç ömrü tanımlı yıllardan uzunsa satış hesaba katılmaz. Ay filtresi seçiliyken dahil edilmez.\nToplam: ${m(t.sale)}`,
-                'Dosya Geliri': `Her plaka için: çalıştığı gün × günlük tutar (o yılın).\nGünlük tutar dosyanın müşterisine göre alınır; müşteriye tutar girilmemişse varsayılan segment tutarı kullanılır.\nMüşteri filtresi seçiliyken yalnızca o müşterilerin dosyalarının geliri; giderler araç başına müşterinin kiralama günü payıyla dağıtılır.\nÜst segment verilen dosya talep edilen segmentin, alt segment verilen dosya verilen segmentin tutarıyla fiyatlanır.\nGün sayımı: tam 24 saatler + 3 saatten fazla artan süre 1 gün.\nToplam: ${f(t.work)} gün → ${m(t.revenue)}`,
+                'Dosya Geliri': `Her dosya için: kiralama günü × günlük tutar.\nKiralama günü tam gündür (24 saat + 3 saati aşan kalan 1 gün). Yıl sonuna sarkan dosya (ör. 25 Aralık teslim, 2 Ocak iade = 8 gün) tamamen başladığı yılın tutarıyla ve teslimat ayına gelir yazılır.\nGünlük tutar dosyanın müşterisine göre alınır; müşteriye tutar girilmemişse varsayılan segment tutarı kullanılır.\nMüşteri filtresi seçiliyken yalnızca o müşterilerin dosyalarının geliri; giderler araç başına müşterinin kiralama günü payıyla dağıtılır.\nÜst segment verilen dosya talep edilen segmentin, alt segment verilen dosya verilen segmentin tutarıyla fiyatlanır.\nGün sayımı: tam 24 saatler + 3 saatten fazla artan süre 1 gün.\nToplam: ${f(t.work)} gün → ${m(t.revenue)}`,
                 'Araç İşletme Gideri': `Araç gider başlıklarının yıllık tutarları × araç adedi.\nYıllık tutar: baz yıl girilen tutar, sonraki yıllar enflasyonla artar. Km bazlı (bakım), ömür boyu adet (lastik), yılda adet (temizlik), tek seferlik ve yakıt km başlıkları kendi kurallarıyla hesaplanır. Araç başı detay: araç kartında "İncele".\nToplam: ${m(t.op)}`,
                 'Alış Gideri': `Araç alış bedelinin anapara kısmı.\nPeşin: tamamı ilk kullanım yılına. Kredili: her yıl ödenen taksitlerin anapara kısmı; kredi araç ömründen uzunsa kalan anapara satış yılında kapatılır.\nToplam: ${m(t.buy)}`,
                 'Faiz Gideri': `Kredili araçların taksitlerindeki faiz kısmı (eşit taksit; aylık faiz = yıllık faiz ÷ 12). Taksit ödendiği yıla yazılır.\nToplam: ${m(t.int)}`,

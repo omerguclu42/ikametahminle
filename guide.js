@@ -139,6 +139,7 @@ window.GUIDE = [
             ] },
             { h: 'Müşteri günlük tutarı', items: [
                 'Dosya geliri = aracın çalıştığı gün × dosyanın müşterisinin, o segment ve yıldaki günlük tutarı.',
+                'Gelir dosyanın başladığı tarihe göre yazılır: kiralamanın tüm günü (tam gün) başladığı yılın tutarıyla fiyatlanır ve teslimat ayına gelir olarak yazılır. Örnek: 25 Aralık teslim, 2 Ocak iade = 8 gün, hepsi Aralık ayı ve o yılın tutarıyla. Doluluk ise takvimde geçen gün kadar aylara bölünür.',
                 'Filo büyüklüğü eğrisi ve en kârlı filo segment düzeyinde çalışır; bunlarda segmentin günlük tutarı, segmentteki talebin müşteri dağılımıyla (kiralama günü) ağırlıklı ortalamadır.',
                 'Üst segment araç verilirse talep edilen segmentin, alt segment araç verilirse verilen segmentin tutarı alınır.'
             ] },
