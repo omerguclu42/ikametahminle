@@ -140,9 +140,10 @@ window.GUIDE = [
             { h: 'Fiyat analizi', items: [
                 'Gün başı maliyet (başabaş tutar) = müşterinin dosyalarına çalışan araçların [işletme gideri + personel payı + (alış + faiz − satış) ÷ araç ömrü], müşterinin o araçlardaki kiralama günü payıyla, ÷ müşterinin kiralama günü. Müşteriye o yıl araç çalışmadıysa segmentteki filonun ortalaması kullanılır. Simülatördeki mevcut filo ve doluluğa göre hesaplanır; filo değişirse başabaş da değişir. Toplamlar simülatördeki Müşteri sekmesiyle aynıdır.',
                 'Her tutar hücresinin altında başabaş tutar yazar: tutar bunun üzerindeyse yeşil (kâr), altındaysa kırmızı (zarar).',
-                'Bir hücreye tıklayınca sağda o segment ve yılın analizi açılır: günlük kâr ve kâr marjı, başabaşa göre indirim payı ya da gereken zam, ortalama kiralama süresi, dosya başı gelir / gider / kâr ve o yılın tahmini dosya, gün, gelir, gider ve neti.',
+                'Sağdaki kartlar hücre seçili değilken müşterinin tüm yıl ve segmentlerinin kiralama günüyle ağırlıklı ortalamasını gösterir; bir hücreye tıklayınca o segment ve yıla geçer, sayfada boş bir yere tıklayınca (ya da "Seçimi kaldır") ortalamaya döner. Kartlarda: günlük kâr ve kâr marjı, başabaşa göre indirim payı ya da gereken zam, ortalama kiralama süresi, dosya başı gelir / gider / kâr ve o yılın tahmini dosya, gün, gelir, gider ve neti.',
                 '"Tutar değişirse" tablosu tutar %10 / %20 azalır ya da artarsa günlük kârın, dosya başı kârın ve yıllık netin ne olacağını gösterir.',
-                'Yıllara Göre Forecast: müşterinin kendi filomuzla karşılanan tüm dosyaları için yıl yıl gelir, gider, net, kârlılık ve kümülatif net; kümülatif netin pozitife döndüğü yıl "kâra geçiş" olarak işaretlenir.',
+                'Nakit Akışı ve Kâra Geçiş: müşterinin yıl ve ay bazında nakit akışı. Dosya geliri teslimat ayına; araç alışı peşinse ilk yılın Ocak ayına, kredili ise aylık taksit (anapara + faiz) olarak; işletme ve personel gideri her aya eşit; araç satışı aracın ömrünün son ayına yazılır. Her kalemin müşteriye düşen kısmı, müşterinin araçtaki kiralama günü payıdır.',
+                'Kümülatif nakdin ilk kez pozitife döndüğü ay "kâra geçiş" (yatırımın geri dönüşü) olarak işaretlenir; en düşük kümülatif değer en yüksek finansman ihtiyacıdır. Yıl satırına tıklayınca aylar açılır.',
                 'Segment × Yıl Başabaş Tablosu: her hücrede girilen tutar / başabaş tutar ve gün başı kâr. Hücreye tıklayınca analiz o hücreye geçer.'
             ] }
         ]

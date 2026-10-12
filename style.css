@@ -401,3 +401,8 @@ tr.cursor-pointer:hover { background: #fff4ec; }
 .pl-kpi .kpi-info { top: 7px; right: 8px; font-size: .82rem; }
 .h-info { color: #adb5bd; cursor: help; font-size: .85rem; }
 .h-info:hover { color: #ff6600; }
+.cash-summary { display: flex; flex-wrap: wrap; gap: 6px 24px; align-items: center; font-size: .88rem; background: #fafbfc; border: 1px solid #eef0f2; border-radius: 8px; padding: 8px 12px; }
+.cash-table tr.cash-year { cursor: pointer; font-weight: 600; background: #fff; }
+.cash-table tr.cash-year:hover td { background: #fff4ec; }
+.cash-table tr.cash-month td { font-size: .8rem; color: #495057; background: #fcfcfd; }
+.cash-table tr.cash-month td:first-child { padding-left: 28px; }

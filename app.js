@@ -341,7 +341,7 @@ const app = createApp({
             // Raporlama
             reportSeg: null,
             // Günlük Tutar: seçili müşteri ve kopyalama kaynağı
-            gtCust: null, gtCopyFrom: null, gtSel: { sg: null, y: null },
+            gtCust: null, gtCopyFrom: null, gtSel: { sg: null, y: null }, gtOpen: {},
             sensP: 10, sensData: null, sensBusy: false, margData: {}, margBusy: false,
             ds: { type: 'dosya', status: 'all', search: '', page: 1, size: 50 }
         };
@@ -460,42 +460,109 @@ const app = createApp({
         priceTips() {
             const S = this.selCell; if (!S) return {};
             const m = this.money, f = this.formatCurrency, d1 = this.fmt1, cl = this.gtCust || NO_CUST_LABEL, u = S.src, has = S.rate !== null && S.costDay !== null;
-            const who = `${cl} · ${S.sg} segmenti · ${S.y}`;
+            const who = S.all ? `${cl} · tüm segment ve yıllar (kiralama günüyle ağırlıklı ortalama)` : `${cl} · ${S.sg} segmenti · ${S.y}`;
             const why = 'Farklı müşterilerde farklı çıkabilir, çünkü her müşterinin maliyeti ona fiilen çalışan araçlardan gelir:\n' +
                 '• Personel gideri araçlara aldıkları DOSYA sayısı oranında dağıtılır; kiralama süresi kısa olan müşteri gün başına daha çok personel payı taşır.\n' +
                 '• Dosya, teslim anında boşta olan en düşük giderli araca verilir; müşterinin dosyaları hangi modellere / ne kadar dolu araçlara düştüyse onların maliyetini taşır.\n' +
                 '• Araç gideri o araçtaki kiralama günü payıyla dağıtılır; doluluğu düşük araca düşen müşteri gün başına daha çok gider taşır.';
             return {
-                rate: `${who}\nBu hücreye girdiğiniz Eurocross Turkey günlük tutarı (müşteriye bir kiralama günü için yansıtılan).\nDosya geliri = kiralama günü (tam gün) × bu tutar.`,
+                rate: S.all ? `${who}\nGirilen günlük tutarların, her segment / yıldaki kiralama günüyle ağırlıklı ortalaması:\nΣ (gün × tutar) ÷ Σ gün = ${S.rate === null ? '-' : m(S.rev) + ' ÷ ' + f(S.days) + ' = ' + m(S.rate)}` + (S.missing ? `\nTutar girilmemiş ${S.missing} segment / yıl ortalamaya katılmadı.` : '')
+                    : `${who}\nBu hücreye girdiğiniz Eurocross Turkey günlük tutarı (müşteriye bir kiralama günü için yansıtılan).\nDosya geliri = kiralama günü (tam gün) × bu tutar.`,
                 cost: !u ? `${who}\nBu segment / yılda filoda aktif araç olmadığı için maliyet hesaplanamıyor.` :
                     `${who}\nBir kiralama gününün bize maliyeti; günlük tutar bunun altındaysa zarar edilir.\n` +
-                    (S.own ? `Bu müşterinin dosyalarına çalışan ${f(u.plates)} aracın, müşterinin o araçlardaki kiralama günü payı kadar gideri:` : `Bu müşteriye bu segment / yılda araç çalışmadı; segmentteki ${f(u.plates || S.plates)} aracın ortalaması kullanıldı:`) +
+                    (S.all ? `Tüm segment ve yılların gün başı maliyetlerinin kiralama günüyle ağırlıklı ortalaması:` : S.own ? `Bu müşterinin dosyalarına çalışan ${f(u.plates)} aracın, müşterinin o araçlardaki kiralama günü payı kadar gideri:` : `Bu müşteriye bu segment / yılda araç çalışmadı; segmentteki ${f(u.plates || S.plates)} aracın ortalaması kullanıldı:`) +
                     `\n  İşletme ${m(u.op)} + personel ${m(u.pers)} + (alış + faiz − satış) ÷ ömür ${m(u.capex)} = ${m(u.cost)}\n  ÷ ${f(u.days)} kiralama günü = ${m(S.costDay)}` +
                     (S.segDay !== null && S.own ? `\nKarşılaştırma: segmentteki tüm filonun ortalaması ${m(S.segDay)}.` : '') + '\n\n' + why,
                 profit: has ? `${who}\nGünlük kâr = günlük tutar − gün başı maliyet\n${m(S.rate)} − ${m(S.costDay)} = ${m(S.profitDay)}\nKâr marjı = günlük kâr ÷ günlük tutar = ${this.pct(S.margin)}` : 'Günlük tutar girildiğinde: günlük tutar − gün başı maliyet.',
                 room: has ? `${who}\n` + (S.profitDay >= 0 ? `Tutar en fazla bu oranda düşürülürse hâlâ zarar edilmez:\n(günlük tutar − başabaş) ÷ günlük tutar = (${m(S.rate)} − ${m(S.costDay)}) ÷ ${m(S.rate)} = %${d1(S.room)}` : `Zarardan çıkmak için tutarın bu oranda artırılması gerekir:\nbaşabaş ÷ günlük tutar − 1 = ${m(S.costDay)} ÷ ${m(S.rate)} − 1 = %${d1((S.costDay / S.rate - 1) * 100)}`) : 'Günlük tutar girildiğinde: başabaş tutara göre indirim payı ya da gereken zam.',
-                avg: `${who}\nBu müşterinin ${S.sg} segmentindeki ${S.handled ? 'kendi filomuzla karşılanan' : ''} dosyalarının ortalama kiralama günü (24 saat + 3 saati aşan kalan 1 gün kuralıyla).\n${d1(S.avgDays)} gün`,
+                avg: `${who}\nBu müşterinin ${S.all ? 'tüm' : S.sg + ' segmentindeki'} ${S.handled ? 'kendi filomuzla karşılanan' : ''} dosyalarının ortalama kiralama günü (24 saat + 3 saati aşan kalan 1 gün kuralıyla).\n${d1(S.avgDays)} gün`,
                 fileRev: has ? `${who}\nDosya başı gelir = ortalama kiralama süresi × günlük tutar\n${d1(S.avgDays)} gün × ${m(S.rate)} = ${m(S.fileRev)}` : 'Günlük tutar girildiğinde: ortalama kiralama süresi × günlük tutar.',
                 fileCost: S.costDay !== null ? `${who}\nDosya başı gider = ortalama kiralama süresi × gün başı maliyet\n${d1(S.avgDays)} gün × ${m(S.costDay)} = ${m(S.costDay * S.avgDays)}` : 'Maliyet hesaplanamıyor (filoda araç yok).',
                 fileProfit: has ? `${who}\nDosya başı kâr = dosya başı gelir − dosya başı gider\n${m(S.fileRev)} − ${m(S.costDay * S.avgDays)} = ${m(S.fileProfit)}` : 'Günlük tutar girildiğinde: dosya başı gelir − dosya başı gider.',
-                year: `${who}\nBu müşterinin ${S.sg} dosyalarından kendi filomuzla karşılananlar (simülatördeki filoya göre):\n${f(S.handled)} dosya, ${f(S.days)} kiralama günü\nGelir = gün × günlük tutar${has ? ' = ' + m(S.rev) : ''}\nGider = gün × gün başı maliyet${S.costDay !== null ? ' = ' + m(S.days * S.costDay) : ''}\nNet = gelir − gider${has ? ' = ' + m(S.profit) : ''}`,
-                scen: `Seçili hücrede günlük tutar değişirse (maliyet aynı kalır):\nGünlük kâr = tutar − gün başı maliyet\nDosya başı kâr = günlük kâr × ortalama kiralama süresi (${d1(S.avgDays)} gün)\nYıllık net = günlük kâr × bu müşterinin ${S.y} yılı ${S.sg} kiralama günü (${f(S.days)})\nİlk satır başabaş tutardır (kâr 0).`,
-                forecast: `${cl} için her yıl, müşterinin tüm segmentlerdeki kendi filomuzla karşılanan dosyaları:\nGelir = Σ kiralama günü × o segment / yılın günlük tutarı\nGider = Σ kiralama günü × gün başı maliyet (müşteriye çalışan araçların, müşterinin günü payıyla gideri; alış + faiz − satış araç ömrüne eşit dağıtılır)\nNet = gelir − gider; kümülatif net yıllar toplanarak ilerler, ilk pozitif olduğu yıl "kâra geçiş".\nToplamlar simülatördeki Müşteri sekmesiyle aynıdır.`,
+                year: `${who}\nBu müşterinin ${S.all ? 'tüm yıllardaki' : S.sg} dosyalarından kendi filomuzla karşılananlar (simülatördeki filoya göre):\n${f(S.handled)} dosya, ${f(S.days)} kiralama günü\nGelir = gün × günlük tutar${has ? ' = ' + m(S.rev) : ''}\nGider = gün × gün başı maliyet${S.costDay !== null ? ' = ' + m(S.days * S.costDay) : ''}\nNet = gelir − gider${has ? ' = ' + m(S.profit) : ''}`,
+                scen: `${S.all ? 'Tüm segment ve yıllardaki tutarlar aynı oranda' : 'Seçili hücrede günlük tutar'} değişirse (maliyet aynı kalır):\nGünlük kâr = tutar − gün başı maliyet\nDosya başı kâr = günlük kâr × ortalama kiralama süresi (${d1(S.avgDays)} gün)\n${S.all ? 'Toplam net (tüm yıllar)' : 'Yıllık net'} = günlük kâr × ${S.all ? 'toplam' : 'bu müşterinin ' + S.y + ' yılı ' + S.sg} kiralama günü (${f(S.days)})\nİlk satır başabaş tutardır (kâr 0).`,
+                forecast: `${cl} için ay ay nakit akışı (paranın gerçekten girip çıktığı ay):\n• Dosya geliri: dosyanın teslimat ayına, kiralama günü × o segment / yılın günlük tutarı.\n• Araç alışı: peşin araçta tutarın tamamı ilk yılın Ocak ayında; kredili araçta her ay taksit (anapara + faiz), kalan anapara araç satılırken kapanır.\n• İşletme ve personel gideri: yıllık tutarın 12'de biri her ay.\n• Araç satışı: aracın ömrünün son ayında (Aralık) gelir.\nHer kalemin bu müşteriye düşen kısmı, müşterinin araçtaki kiralama günü payıdır.\nKümülatif nakdin ilk kez sıfırın üzerine çıktığı ay "kâra geçiş" (yatırımın geri dönüşü); en düşük kümülatif değer en yüksek finansman ihtiyacıdır.\nToplamlar simülatördeki Müşteri sekmesiyle aynıdır.`,
                 grid: `Her hücre: girilen günlük tutar / başabaş tutar (gün başı maliyet) ve gün başı kâr.\nYeşil: tutar başabaşın üzerinde (kâr), kırmızı: altında (zarar).\n"Filoda araç yok": simülatörde bu segmentten o yıl aktif araç yok.\nHücreye tıklayınca yukarıdaki analiz o hücreye geçer.`
             };
         },
-        /* Seçili hücre (varsayılan: müşterinin ilk segmenti, ilk yıl) */
+        /* Günlük Tutar: müşterinin ay ay nakit akışı tahmini (araç alışı ilk ay / taksitlerle, satış ömür sonunda) */
+        cashLab() {
+            const R = this.report, c = this.gtCust, e = this.custEntry; if (c === null || !e) return null;
+            const sc = R.scale || 1, years = R.years, RT = R.rates, vmap = {};
+            this.vehicles.forEach(v => { vmap[v.id] = v; });
+            const rows = years.map(y => MONTHS.map((m, mi) => ({ y, mi, files: 0, days: 0, rev: 0, sale: 0, capex: 0, op: 0, pers: 0 })));
+            const yi = {}; years.forEach((y, i) => { yi[y] = i; });
+            let any = false;
+            R.plates.forEach(p => {
+                let raw = 0, mine = 0; for (const k in p.price) { raw += p.price[k]; if (E.splitKey(k)[1] === c) mine += p.price[k]; }
+                if (!raw || !mine || !p.life.length) return;
+                any = true;
+                const sh = mine / raw, ct = R.vehicleCosts[p.vid], v = vmap[p.vid] || {}, life = p.life, L = life.length;
+                const at = (y, mi) => (yi[y] === undefined ? null : rows[yi[y]][mi]);
+                life.forEach(y => {
+                    const b = p.byYear[y];
+                    for (let mi = 0; mi < 12; mi++) {
+                        const r = at(y, mi); if (!r) continue;
+                        r.op += b.op / 12 * sh; r.pers += b.pers / 12 * sh;
+                        const pr = p.mPrice[mi]; for (const k in pr) { const [sg, cc] = E.splitKey(k); if (cc !== c) continue; r.days += pr[k] * sc; r.rev += pr[k] * sc * RT.rate(c, sg, y); }
+                        r.files += ((p.mCf[mi] || {})[c] || 0) * sc;
+                    }
+                });
+                // Araç alışı: peşin → ilk yılın Ocak'ı; kredili → aylık taksit, ömür sonunda kalan anapara
+                if (ct.loan.credit) {
+                    E.loanSchedule(v.alisBedeli, v.vade, v.faiz).months.forEach((m, k) => {
+                        const yIdx = Math.floor(k / 12), r = yIdx < L ? at(life[yIdx], k % 12) : at(life[L - 1], 11);
+                        if (r) r.capex += (yIdx < L ? m.principal + m.interest : m.principal) * sh;
+                    });
+                } else { const r = at(life[0], 0); if (r) r.capex += (Number(v.alisBedeli) || 0) * sh; }
+                const last = life[L - 1], rs = at(last, 11); if (rs) rs.sale += p.byYear[last].sale * sh;
+            });
+            if (!any) return { years: [], turn: null, low: null, tot: null };
+            let cum = 0, turn = null, low = null, n = 0;
+            const out = years.map((y, i) => {
+                const months = rows[i].map(r => {
+                    n++; r.net = r.rev + r.sale - r.capex - r.op - r.pers; cum += r.net; r.cum = cum; r.n = n;
+                    if (low === null || cum < low.cum) low = { y: r.y, mi: r.mi, cum };
+                    if (turn === null && cum >= 0 && n > 1) turn = { y: r.y, mi: r.mi, n };
+                    return r;
+                });
+                const t = { y, files: 0, days: 0, rev: 0, sale: 0, capex: 0, op: 0, pers: 0, net: 0 };
+                months.forEach(r => { ['files', 'days', 'rev', 'sale', 'capex', 'op', 'pers', 'net'].forEach(k => { t[k] += r[k]; }); });
+                t.cum = months[11].cum; t.turn = !!(turn && turn.y === y);
+                return { ...t, months };
+            });
+            const tot = { files: 0, days: 0, rev: 0, sale: 0, capex: 0, op: 0, pers: 0, net: 0 };
+            out.forEach(t => { Object.keys(tot).forEach(k => { tot[k] += t[k]; }); });
+            return { years: out, turn, low, tot };
+        },
+        /* Seçili hücre. Hücre seçili değilse: müşterinin tüm segment ve yılları (kiralama günüyle ağırlıklı ortalama, toplamlar) */
         selCell() {
             const P = this.priceLab; if (!P || !P.segs.length) return null;
             const s = this.gtSel;
             if (s.sg && P.grid[s.sg] && P.grid[s.sg][s.y]) return P.grid[s.sg][s.y];
-            const sg = P.segs.find(x => this.years.some(y => P.grid[x][y].hasFleet)) || P.segs[0];
-            return P.grid[sg][this.years[0]];
+            const t = { all: true, sg: null, y: null, days: 0, handled: 0, rev: 0, cost: 0, costDays: 0, rateDays: 0, op: 0, pers: 0, capex: 0, plates: 0, missing: 0 };
+            P.segs.forEach(sg => this.years.forEach(y => {
+                const g = P.grid[sg][y]; if (!g.days) return;
+                t.days += g.days; t.handled += g.handled;
+                if (g.rate !== null) { t.rev += g.days * g.rate; t.rateDays += g.days; } else t.missing++;
+                if (g.costDay !== null) { t.cost += g.days * g.costDay; t.costDays += g.days; if (g.breakdown) { t.op += g.breakdown.op * g.days; t.pers += g.breakdown.pers * g.days; t.capex += g.breakdown.capex * g.days; } }
+                t.plates = Math.max(t.plates, g.src ? g.src.plates : 0);
+            }));
+            const r = { all: true, sg: null, y: null, days: t.days, handled: t.handled, avgDays: t.handled ? t.days / t.handled : 0, missing: t.missing,
+                rate: t.rateDays ? t.rev / t.days : null, costDay: t.costDays ? t.cost / t.costDays : null, hasFleet: t.costDays > 0, plates: t.plates, own: true,
+                src: t.costDays ? { cost: t.cost, op: t.op, pers: t.pers, capex: t.capex, days: t.costDays, plates: t.plates } : null, segDay: null,
+                breakdown: t.costDays ? { op: t.op / t.costDays, pers: t.pers / t.costDays, capex: t.capex / t.costDays } : null };
+            if (r.rate !== null && r.costDay !== null) {
+                r.profitDay = r.rate - r.costDay; r.margin = r.rate ? r.profitDay / r.rate * 100 : 0; r.room = r.margin;
+                r.fileRev = r.rate * r.avgDays; r.fileProfit = r.profitDay * r.avgDays; r.rev = t.rev; r.cost = t.cost; r.profit = t.rev - t.cost;
+            }
+            return r;
         },
         /* Seçili hücrede tutar ±%10 / ±%20 ve başabaş tutarla kârlılık */
         priceScenarios() {
             const S = this.selCell; if (!S || S.costDay === null) return [];
             const mk = (k, rate, label, extra) => { const pd = rate - S.costDay; return { k, rate, label, profitDay: pd, margin: rate ? pd / rate * 100 : 0, fileProfit: pd * S.avgDays, year: pd * S.days, ...extra }; };
+            // Tüm yıllar seçiliyken: her hücrenin tutarı aynı oranda değişir (ortalama tutar × oran)
             const out = [mk('be', S.costDay, 'başabaş', { be: true })];
             if (S.rate !== null) [[-20, 0.8], [-10, 0.9], [0, 1], [10, 1.1], [20, 1.2]].forEach(([p, f]) => out.push(mk('p' + p, S.rate * f, p ? (p > 0 ? '+' : '−') + '%' + Math.abs(p) : 'mevcut', { cur: !p })));
             else [[10, 1.1], [20, 1.2], [30, 1.3]].forEach(([p, f]) => out.push(mk('b' + p, S.costDay * f, 'başabaş +%' + p)));
@@ -1277,6 +1344,12 @@ const app = createApp({
         this.$watch(() => [this.persSummary.suggested, this.settings.personelKilit], () => this.syncPersonnel(), { immediate: true });
         this.$watch(() => this.optMax, m => { const t = this.tempVehicle; if (t && t.kredili && m && Number(t.vade) > m) t.vade = m; });
         window.addEventListener('keydown', e => { if (e.key === 'Escape' && this.present) this.present = false; });
+        // Günlük Tutar: hücre / analiz paneli dışında bir yere tıklanınca seçim kalkar, kartlar tüm yılların ortalamasına döner
+        document.addEventListener('mousedown', e => {
+            if (this.activeTab !== 'gunlukTutar' || !this.gtSel.sg) return;
+            if (e.target.closest && e.target.closest('.rate-cell, .pl-cell, .price-lab, .kpi-tip')) return;
+            this.gtSel = { sg: null, y: null };
+        });
         this.$watch(() => [this.activeTab, this.report, this.sensP, this.authed], () => this.scheduleSens());
         this.$watch(() => this.sensData, () => this.scheduleCharts());
         this.$watch(() => [this.activeTab, this.report, this.authed], () => this.scheduleMarginal(), { immediate: true });
@@ -1519,6 +1592,10 @@ const app = createApp({
             this.filters.year = this.filters.year.filter(x => String(x) !== String(y));
         },
 
+        toggleAllYears() {
+            const L = (this.cashLab && this.cashLab.years) || [], open = !L.every(t => this.gtOpen[t.y]), o = {};
+            L.forEach(t => { o[t.y] = open; }); this.gtOpen = o;
+        },
         /* ---- Müşteri bazlı günlük tutarlar ---- */
         ensureCustEntry(c) {
             if (c === null || c === undefined || !this.authed) return;
