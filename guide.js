@@ -108,7 +108,7 @@ window.GUIDE = [
                 'Tam yıllık (365 gün) veri yüklenmesi önerilir; daha kısa veride çalışılan gün ve gelir yalnızca o dönemi kapsar.'
             ] },
             { h: 'Müşteri', items: [
-                'Müşteri sütunu isteğe bağlıdır; yoksa dosyalar müşterisiz yüklenir ve varsayılan günlük tutarlar kullanılır.',
+                'Müşteri sütunu isteğe bağlıdır; yoksa dosyalar müşterisiz yüklenir ve Günlük Tutar sayfasında "Müşterisi belirtilmemiş" olarak fiyatlanır.',
                 'Bir müşteri birçok dosyada geçebilir; müşteriler tekrarsız listelenir. Büyük / küçük harf ve fazla boşluk farkı aynı müşteri sayılır (ilk görülen yazılış kullanılır).',
                 'Müşteri listesi Günlük Tutar sayfasında, simülatör ve raporlama filtrelerinde ve müşteri bazlı tablolarda kullanılır.'
             ] },
@@ -129,23 +129,23 @@ window.GUIDE = [
     },
     {
         id: 'gunlukTutar', title: 'Günlük Tutar ve Tedarikçi', icon: 'bi-cash-coin',
-        intro: 'Müşteriye yansıtılan günlük kira tutarı ve tedarikçiye ödenen günlük tutar müşteri, segment ve yıla göre girilir.',
+        intro: 'Eurocross Turkey günlük tutarı (müşteriye yansıtılan) ve tedarikçiye ödenen günlük tutar müşteri, segment ve yıla göre girilir. Varsayılan tutar yoktur; her müşteri için tutar girilmelidir.',
         sections: [
             { h: 'Müşteri bazlı tutarlar', items: [
-                'Tarihçedeki müşteriler listeden seçilir; her müşteri için segment × yıl bazında kendi günlük tutarı ve tedarikçi günlük tutarı girilir.',
+                'Tarihçedeki müşteriler listeden seçilir; her müşteri için segment × yıl bazında Eurocross Turkey günlük tutarı ve tedarikçi günlük tutarı girilir. Müşteri bilgisi olmayan dosyalar listede "Müşterisi belirtilmemiş" olarak yer alır.',
                 'Müşterinin talep ettiği segmentler turuncu işaretlidir (dosya sayısıyla). Eksik zorunlu hücreler kırmızı görünür ve sayfanın üstünde tutarı eksik müşteriler listelenir.',
-                'Müşteride boş bırakılan hücrede varsayılan tutar kullanılır; varsayılan da boşsa gelir 0 hesaplanır. Tarihçede müşteri bilgisi yoksa sayfa uyarı verir ve yalnızca varsayılan tutarlar kullanılır.',
-                '"Tutarları kopyala" ile varsayılan tutarlar ya da başka bir müşterinin tutarları seçili müşteriye alınır; "Diğer müşterilere uygula" ile seçili müşterinin tutarları eksik hücrelere ya da tüm müşterilere yazılır.'
+                'Eurocross Turkey tutarı boş bırakılan hücrede gelir 0 hesaplanır; tedarikçi tutarı boşsa o dosyalar tedarikçiye verilemez ve kayıp sayılır. Günlük marj yalnızca iki tutarın da girildiği hücrelerde gösterilir. Tarihçede müşteri bilgisi yoksa sayfa uyarı verir.',
+                '"Başka müşteriden kopyala" ile bir müşterinin tutarları seçili müşteriye alınır; "Diğer müşterilere uygula" ile seçili müşterinin tutarları eksik hücrelere ya da tüm müşterilere yazılır.'
             ] },
-            { h: 'Müşteri günlük tutarı', items: [
+            { h: 'Eurocross Turkey günlük tutarı', items: [
                 'Dosya geliri = aracın çalıştığı gün × dosyanın müşterisinin, o segment ve yıldaki günlük tutarı.',
                 'Gelir dosyanın başladığı tarihe göre yazılır: kiralamanın tüm günü (tam gün) başladığı yılın tutarıyla fiyatlanır ve teslimat ayına gelir olarak yazılır. Örnek: 25 Aralık teslim, 2 Ocak iade = 8 gün, hepsi Aralık ayı ve o yılın tutarıyla. Doluluk ise takvimde geçen gün kadar aylara bölünür.',
                 'Filo büyüklüğü eğrisi ve en kârlı filo segment düzeyinde çalışır; bunlarda segmentin günlük tutarı, segmentteki talebin müşteri dağılımıyla (kiralama günü) ağırlıklı ortalamadır.',
                 'Üst segment araç verilirse talep edilen segmentin, alt segment araç verilirse verilen segmentin tutarı alınır.'
             ] },
             { h: 'Tedarikçi günlük tutarı', items: [
-                'Kendi aracımızla karşılanamayan dosyalar tedarikçiye verilir. Marj = gün × (müşteri tutarı − tedarikçi tutarı).',
-                'Tedarikçi tutarı girilmeyen segment / yılda dosya kaybedilmiş sayılır (marj 0).',
+                'Kendi aracımızla karşılanamayan dosyalar tedarikçiye verilir. Marj = gün × (Eurocross Turkey tutarı − tedarikçi tutarı), dosyanın müşterisinin tutarlarıyla.',
+                'Tedarikçi tutarı girilmeyen müşteri / segment / yılda dosya kaybedilmiş sayılır (marj 0).',
                 'Kendi aracın günlük avantajı = tedarikçi günlük tutarı − kendi aracımızın çalışılan gün başı maliyeti. Pozitifse araç almak tedarikçiye vermekten kârlıdır.'
             ] }
         ]
@@ -188,7 +188,7 @@ window.GUIDE = [
             ] },
             { h: 'Öne çıkan analizler', items: [
                 'Filo Büyüklüğü – Karşılama – Kâr: segmentte araç sayısı arttıkça karşılama oranı ve net nasıl değişir; en kârlı nokta.',
-                'Duyarlılık Analizi: günlük tutar, tedarikçi tutarı, alış / satış bedeli, giderler, yakıt, personel, enflasyon ve hizmet sayısı değişince şirket netinin ne kadar değiştiği; en etkili varsayım en üstte.',
+                'Duyarlılık Analizi: Eurocross Turkey günlük tutarı, tedarikçi tutarı, alış / satış bedeli, giderler, yakıt, personel, enflasyon ve hizmet sayısı değişince şirket netinin ne kadar değiştiği; en etkili varsayım en üstte.',
                 'Model Karar Tablosu: her modelin gün başı geliri, maliyeti ve tedarikçiye göre avantajı.',
                 'Müşteri analizleri (müşteri bilgisi varsa): müşteri bazında gelir-gider-net, talep ve karşılama, talep / gelir / doluluk payları, birim ekonomi (gün başı gelir, maliyet, kâr), aylık talep dağılımı ve müşteri × segment talep matrisi.',
                 'Detaylı Veri Seti: dosya ya da plaka-yıl bazında tüm veriler; Excel\'e aktarılabilir.'

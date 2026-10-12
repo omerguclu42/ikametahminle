@@ -371,154 +371,106 @@
                 <div class="alert alert-warning d-flex gap-2 align-items-start" v-if="!hasCustomers">
                     <i class="bi bi-exclamation-triangle-fill mt-1"></i>
                     <div><b>Henüz tarihçeye eklenen müşteri bilgisi yoktur.</b>
-                        <div class="small">Tarihçe dosyanıza <code>Müşteri</code> sütunu ekleyip yeniden yüklediğinizde müşteri listesi burada açılır ve her müşteri için segment bazlı kendi ve tedarikçi günlük tutarlarını girebilirsiniz. O zamana kadar aşağıdaki varsayılan tutarlar kullanılır.</div></div>
+                        <div class="small">Tarihçe dosyanıza <code>Müşteri</code> sütunu ekleyip yeniden yüklediğinizde müşteri listesi burada açılır ve her müşteri için segment bazlı Eurocross Turkey ve tedarikçi günlük tutarlarını girersiniz.<span v-if="rateCustomers.length"> Müşteri bilgisi olmayan dosyaların tutarlarını aşağıda "{{ noCustLabel }}" olarak girebilirsiniz.</span></div></div>
                 </div>
-                <template v-else>
-                    <div class="alert alert-warning d-flex gap-2 align-items-start" v-if="custMissingOwn.length">
-                        <i class="bi bi-exclamation-triangle-fill mt-1"></i>
-                        <div><b>Günlük tutarı girilmemiş {{ custMissingOwn.length }} müşteri var:</b> {{ custMissingOwn.join(', ') }}
-                            <div class="small">Bu müşterilerin dosyalarında, talep ettikleri segment ve yıllarda kendi günlük tutarı eksik. Eksik hücrelerde varsayılan tutar kullanılır; varsayılan da boşsa gelir 0 hesaplanır.</div></div>
-                    </div>
-                    <div class="alert alert-light border d-flex gap-2 align-items-start small" v-if="custMissingSup.length">
-                        <i class="bi bi-info-circle text-orange mt-1"></i>
-                        <div><b>Tedarikçi günlük tutarı girilmemiş {{ custMissingSup.length }} müşteri:</b> {{ custMissingSup.join(', ') }}. Bu müşterilerin araç veremediğimiz dosyaları (varsayılan tedarikçi tutarı da yoksa) kaybedilmiş sayılır.</div>
-                    </div>
-                    <div class="alert alert-success py-2 small" v-if="!custMissingOwn.length && !custMissingSup.length"><i class="bi bi-check-circle"></i> Tüm müşterilerin kendi ve tedarikçi günlük tutarları girilmiş.</div>
+                <div class="alert alert-warning d-flex gap-2 align-items-start" v-if="custMissingOwn.length">
+                    <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+                    <div><b>Günlük tutarı girilmemiş {{ custMissingOwn.length }} müşteri var:</b> {{ custMissingOwn.join(', ') }}
+                        <div class="small">Bu müşterilerin dosyalarında, talep ettikleri segment ve yıllarda Eurocross Turkey günlük tutarı eksik. Eksik hücrelerde gelir 0 hesaplanır.</div></div>
+                </div>
+                <div class="alert alert-light border d-flex gap-2 align-items-start small" v-if="custMissingSup.length">
+                    <i class="bi bi-info-circle text-orange mt-1"></i>
+                    <div><b>Tedarikçi günlük tutarı girilmemiş {{ custMissingSup.length }} müşteri:</b> {{ custMissingSup.join(', ') }}. Bu müşterilerin araç veremediğimiz dosyaları tedarikçiye verilemez ve kaybedilmiş sayılır.</div>
+                </div>
+                <div class="alert alert-success py-2 small" v-if="rateCustomers.length && !custMissingOwn.length && !custMissingSup.length"><i class="bi bi-check-circle"></i> Tüm müşterilerin Eurocross Turkey ve tedarikçi günlük tutarları girilmiş.</div>
 
-                    <div class="card shadow-sm border-0 mb-4">
-                        <div class="card-header bg-white d-flex flex-wrap gap-3 align-items-end">
+                <div class="card shadow-sm border-0" v-if="!rateCustomers.length">
+                    <div class="empty-state">
+                        <i class="bi bi-cash-coin"></i>
+                        <div class="es-title">Önce tarihçe yükleyin</div>
+                        <div class="es-text">Günlük tutarlar, tarihçedeki müşterilere göre segment ve yıl bazında girilir.</div>
+                        <button class="btn btn-orange mt-2" @click="go('tarihce')"><i class="bi bi-file-earmark-spreadsheet"></i> Tarihçeye Git</button>
+                    </div>
+                </div>
+                <div class="card shadow-sm border-0 mb-4" v-else>
+                    <div class="card-header bg-white d-flex flex-wrap gap-3 align-items-end">
+                        <div>
+                            <label class="small text-muted d-block">Müşteri ({{ rateCustomers.length }})</label>
+                            <select class="form-select" style="min-width:380px" v-model="gtCust">
+                                <option v-for="o in rateCustomers" :key="o.c || '_'" :value="o.c">{{ custOptionLabel(o) }}</option>
+                            </select>
+                        </div>
+                        <div class="ms-auto d-flex gap-2 align-items-end flex-wrap" v-if="rateCustomers.length > 1">
                             <div>
-                                <label class="small text-muted d-block">Müşteri ({{ histCustomers.list.length }})</label>
-                                <select class="form-select" style="min-width:380px" v-model="gtCust">
-                                    <option v-for="o in histCustomers.list" :key="o.c" :value="o.c">{{ custOptionLabel(o) }}</option>
-                                </select>
-                            </div>
-                            <div class="ms-auto d-flex gap-2 align-items-end flex-wrap">
-                                <div>
-                                    <label class="small text-muted d-block">Tutarları kopyala</label>
-                                    <div class="input-group input-group-sm">
-                                        <select class="form-select" v-model="gtCopyFrom" style="max-width:220px">
-                                            <option value="__default">Varsayılan tutarlardan</option>
-                                            <option v-for="o in histCustomers.list.filter(x => x.c !== gtCust)" :key="o.c" :value="o.c">{{ o.c }}</option>
-                                        </select>
-                                        <button class="btn btn-outline-orange" @click="copyCustRates" :disabled="!gtCust"><i class="bi bi-clipboard-check"></i> Kopyala</button>
-                                    </div>
-                                </div>
-                                <div class="dropdown">
-                                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" :disabled="!custEntry || histCustomers.list.length < 2"><i class="bi bi-people"></i> Diğer müşterilere uygula</button>
-                                    <ul class="dropdown-menu dropdown-menu-end">
-                                        <li><a class="dropdown-item" href="#" @click.prevent="applyCustRatesToAll(true)">Yalnızca eksik hücreleri doldur</a></li>
-                                        <li><a class="dropdown-item" href="#" @click.prevent="applyCustRatesToAll(false)">Tüm müşterilerin üzerine yaz</a></li>
-                                    </ul>
+                                <label class="small text-muted d-block">Başka müşteriden kopyala</label>
+                                <div class="input-group input-group-sm">
+                                    <select class="form-select" v-model="gtCopyFrom" style="max-width:220px">
+                                        <option :value="null" disabled>Müşteri seçin</option>
+                                        <option v-for="o in rateCustomers.filter(x => x.c !== gtCust)" :key="o.c || '_'" :value="o.c">{{ o.c || noCustLabel }}</option>
+                                    </select>
+                                    <button class="btn btn-outline-orange" @click="copyCustRates" :disabled="gtCust === null || gtCopyFrom === null"><i class="bi bi-clipboard-check"></i> Kopyala</button>
                                 </div>
                             </div>
-                        </div>
-                        <div class="card-body" v-if="custEntry">
-                            <p class="text-muted small mb-2"><b>{{ gtCust }}</b> müşterisinin talep ettiği segmentler turuncu işaretlidir (dosya sayısıyla). Alt segment araç verilen dosya verilen segmentin tutarıyla fiyatlandığı için diğer segmentleri de doldurmanız önerilir. Boş bırakılan hücrede varsayılan tutar kullanılır.</p>
-                            <div class="row g-4">
-                                <div class="col-xl-6">
-                                    <h6 class="text-orange">Müşteri Günlük Tutarı (₺) <small class="text-muted fw-normal">· müşteriye yansıtılan</small></h6>
-                                    <div class="table-responsive">
-                                        <table class="table table-sm align-middle mb-0 rate-table">
-                                            <thead class="table-light"><tr><th style="width:120px">Segment</th><th v-for="y in years" :key="y" style="min-width:130px">{{ y }}</th></tr></thead>
-                                            <tbody>
-                                                <tr v-for="s in segments" :key="s" :class="{'seg-used': custRateStatus[gtCust] && custRateStatus[gtCust].segs.includes(s)}">
-                                                    <th>{{ s }} <span class="badge bg-orange-soft" v-if="histCustomers.list.find(o => o.c === gtCust) && histCustomers.list.find(o => o.c === gtCust).segs[s]">{{ formatCurrency(histCustomers.list.find(o => o.c === gtCust).segs[s]) }}</span></th>
-                                                    <td v-for="y in years" :key="s + y"><num-input v-model="custEntry.gunluk[s][y]" :step="1" :invalid="custRateStatus[gtCust] && custRateStatus[gtCust].own.includes(s) && (custEntry.gunluk[s][y] === null || custEntry.gunluk[s][y] === '')"></num-input></td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                                <div class="col-xl-6">
-                                    <h6 class="text-orange">Tedarikçi Günlük Tutarı (₺) <small class="text-muted fw-normal">· tedarikçiye ödenen</small></h6>
-                                    <div class="table-responsive">
-                                        <table class="table table-sm align-middle mb-0 rate-table">
-                                            <thead class="table-light"><tr><th style="width:120px">Segment</th><th v-for="y in years" :key="y" style="min-width:130px">{{ y }}</th></tr></thead>
-                                            <tbody>
-                                                <tr v-for="s in segments" :key="s" :class="{'seg-used': custRateStatus[gtCust] && custRateStatus[gtCust].segs.includes(s)}">
-                                                    <th>{{ s }}</th>
-                                                    <td v-for="y in years" :key="s + y"><num-input v-model="custEntry.tedarikci[s][y]" :step="1"></num-input></td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
+                            <div class="dropdown">
+                                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" :disabled="!custEntry"><i class="bi bi-people"></i> Diğer müşterilere uygula</button>
+                                <ul class="dropdown-menu dropdown-menu-end">
+                                    <li><a class="dropdown-item" href="#" @click.prevent="applyCustRatesToAll(true)">Yalnızca eksik hücreleri doldur</a></li>
+                                    <li><a class="dropdown-item" href="#" @click.prevent="applyCustRatesToAll(false)">Tüm müşterilerin üzerine yaz</a></li>
+                                </ul>
                             </div>
-                            <h6 class="text-orange mt-4">Günlük Marj (Müşteri − Tedarikçi) · {{ gtCust }}</h6>
-                            <div class="table-responsive">
-                                <table class="table table-sm text-end mb-0">
-                                    <thead class="table-light"><tr><th class="text-start" style="width:120px">Segment</th><th v-for="y in years" :key="y">{{ y }}</th></tr></thead>
-                                    <tbody>
-                                        <tr v-for="s in segments" :key="s">
-                                            <th class="text-start">{{ s }}</th>
-                                            <td v-for="y in years" :key="s + y" :class="report.rates.sup(gtCust, s, y) > 0 ? netClass(report.rates.rate(gtCust, s, y) - report.rates.sup(gtCust, s, y)) : 'text-muted'">
-                                                {{ report.rates.sup(gtCust, s, y) > 0 ? money(report.rates.rate(gtCust, s, y) - report.rates.sup(gtCust, s, y)) + ' (' + pct(report.rates.rate(gtCust, s, y) ? (report.rates.rate(gtCust, s, y) - report.rates.sup(gtCust, s, y)) / report.rates.rate(gtCust, s, y) * 100 : 0) + ')' : '-' }}</td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                            <div class="small text-muted mt-1">Marj, boş hücrelerde varsayılan tutarlarla hesaplanır.</div>
                         </div>
                     </div>
-                    <div class="alert alert-light border small d-flex align-items-center gap-2" v-if="orphanRates.length">
-                        <i class="bi bi-archive"></i> Tarihçede artık bulunmayan {{ orphanRates.length }} müşterinin tutarları saklanıyor ({{ orphanRates.join(', ') }}).
-                        <button class="btn btn-sm btn-outline-secondary ms-auto" @click="removeOrphanRates">Temizle</button>
-                    </div>
-                </template>
-
-                <!-- Varsayılan tutarlar -->
-                <div class="card shadow-sm border-0 mb-4">
-                    <div class="card-header bg-white"><h5 class="mb-0">{{ hasCustomers ? 'Varsayılan Günlük Tutarlar' : 'Günlük Tutar' }} <small class="text-muted fw-normal fs-6" v-if="hasCustomers">· müşterisi belirtilmemiş dosyalar ve müşteride boş bırakılan hücreler için</small></h5></div>
-                    <div class="card-body">
-                        <p class="text-muted">Segment ve yıla göre araç başı günlük kira tutarı (₺). Simülatörde gelir = aracın o yıl çalıştığı gün sayısı × günlük tutar olarak hesaplanır. Üst segment araç verilen dosya talep edilen segmentin, alt segment araç verilen dosya verilen segmentin tutarıyla fiyatlanır.</p>
-                        <div class="table-responsive">
-                            <table class="table align-middle">
-                                <thead class="table-light"><tr><th style="width:140px">Segment</th><th v-for="y in years" :key="y" style="min-width:150px">{{ y }}</th></tr></thead>
-                                <tbody>
-                                    <tr v-for="s in segments" :key="s">
-                                        <th>{{ s }}</th>
-                                        <td v-for="y in years" :key="s + y"><num-input v-model="settings.gunlukTutar[s][y]" :step="1"></num-input></td>
-                                    </tr>
-                                </tbody>
-                            </table>
+                    <div class="card-body" v-if="custEntry && gtInfo">
+                        <p class="text-muted small mb-2"><b>{{ gtInfo.c || noCustLabel }}</b> için talep edilen segmentler turuncu işaretlidir (dosya sayısıyla). Alt segment araç verilen dosya verilen segmentin tutarıyla fiyatlandığı için diğer segmentleri de doldurmanız önerilir.
+                            Eurocross Turkey tutarı boş bırakılan hücrede gelir 0 hesaplanır; tedarikçi tutarı boşsa o dosyalar tedarikçiye verilemez (kayıp sayılır). Yıl eklemek / silmek için Yakıt &amp; Enflasyon sayfasını kullanın.</p>
+                        <div class="row g-4">
+                            <div class="col-xl-6">
+                                <h6 class="text-orange">Eurocross Turkey Günlük Tutarı (₺)</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle mb-0 rate-table">
+                                        <thead class="table-light"><tr><th style="width:120px">Segment</th><th v-for="y in years" :key="y" style="min-width:130px">{{ y }}</th></tr></thead>
+                                        <tbody>
+                                            <tr v-for="s in segments" :key="s" :class="{'seg-used': gtInfo.segs[s]}">
+                                                <th>{{ s }} <span class="badge bg-orange-soft" v-if="gtInfo.segs[s]">{{ formatCurrency(gtInfo.segs[s]) }}</span></th>
+                                                <td v-for="y in years" :key="s + y"><num-input v-model="custEntry.gunluk[s][y]" :step="1" :invalid="!!gtInfo.segs[s] && (custEntry.gunluk[s][y] === null || custEntry.gunluk[s][y] === '')"></num-input></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="col-xl-6">
+                                <h6 class="text-orange">Tedarikçi Günlük Tutarı (₺)</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle mb-0 rate-table">
+                                        <thead class="table-light"><tr><th style="width:120px">Segment</th><th v-for="y in years" :key="y" style="min-width:130px">{{ y }}</th></tr></thead>
+                                        <tbody>
+                                            <tr v-for="s in segments" :key="s" :class="{'seg-used': gtInfo.segs[s]}">
+                                                <th>{{ s }}</th>
+                                                <td v-for="y in years" :key="s + y"><num-input v-model="custEntry.tedarikci[s][y]" :step="1"></num-input></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
                         </div>
-                        <div class="input-group mt-2" style="max-width:420px">
-                            <input type="number" class="form-control" v-model.number="newYear" placeholder="Yıl ekle (Örn: 2031)" @keyup.enter="addYear">
-                            <button class="btn btn-orange" @click="addYear">Yıl Ekle</button>
-                        </div>
-                    </div>
-                </div>
-                <div class="card shadow-sm border-0 mb-4">
-                    <div class="card-header bg-white"><h5 class="mb-0">{{ hasCustomers ? 'Varsayılan ' : '' }}Tedarikçi Günlük Tutarı (₺)</h5></div>
-                    <div class="card-body">
-                        <p class="text-muted">Araç veremediğimiz dosyalar tedarikçiye verilir. Tedarikçiye ödenen günlük tutarı segment ve yıla göre girin. Marj = müşteriye yansıtılan günlük tutar − tedarikçi tutarı. Tutar girilmeyen segment/yılda dosya kaybedilmiş sayılır.
-                            "En kârlı filo" seçeneği tedarikçi marjını da hesaba katar: aracın çalıştığı gün başına maliyeti tedarikçi tutarından düşükse araç eklemek kârlıdır.</p>
-                        <div class="table-responsive">
-                            <table class="table align-middle">
-                                <thead class="table-light"><tr><th style="width:140px">Segment</th><th v-for="y in years" :key="y" style="min-width:150px">{{ y }}</th></tr></thead>
-                                <tbody>
-                                    <tr v-for="s in segments" :key="s">
-                                        <th>{{ s }}</th>
-                                        <td v-for="y in years" :key="s + y"><num-input v-model="settings.tedarikciTutar[s][y]" :step="1"></num-input></td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                        <h6 class="text-orange mt-3">Günlük Marj (Müşteri − Tedarikçi)</h6>
+                        <h6 class="text-orange mt-4">Günlük Marj (Eurocross Turkey − Tedarikçi) · {{ gtInfo.c || noCustLabel }}</h6>
                         <div class="table-responsive">
                             <table class="table table-sm text-end mb-0">
-                                <thead class="table-light"><tr><th class="text-start" style="width:140px">Segment</th><th v-for="y in years" :key="y">{{ y }}</th></tr></thead>
+                                <thead class="table-light"><tr><th class="text-start" style="width:120px">Segment</th><th v-for="y in years" :key="y">{{ y }}</th></tr></thead>
                                 <tbody>
                                     <tr v-for="s in segments" :key="s">
                                         <th class="text-start">{{ s }}</th>
-                                        <td v-for="y in years" :key="s + y" :class="Number(settings.tedarikciTutar[s][y]) > 0 ? netClass((Number(settings.gunlukTutar[s][y]) || 0) - Number(settings.tedarikciTutar[s][y])) : 'text-muted'">
-                                            {{ Number(settings.tedarikciTutar[s][y]) > 0 ? money((Number(settings.gunlukTutar[s][y]) || 0) - Number(settings.tedarikciTutar[s][y])) + ' (' + pct(Number(settings.gunlukTutar[s][y]) ? ((Number(settings.gunlukTutar[s][y]) - Number(settings.tedarikciTutar[s][y])) / Number(settings.gunlukTutar[s][y]) * 100) : 0) + ')' : '-' }}</td>
+                                        <td v-for="y in years" :key="s + y" :class="marginCell(s, y).cls">{{ marginCell(s, y).text }}</td>
                                     </tr>
                                 </tbody>
                             </table>
                         </div>
+                        <div class="small text-muted mt-1">Marj yalnızca iki tutarın da girildiği hücrelerde hesaplanır. "En kârlı filo" seçeneği tedarikçi marjını da hesaba katar.</div>
                     </div>
+                </div>
+                <div class="alert alert-light border small d-flex align-items-center gap-2" v-if="orphanRates.length">
+                    <i class="bi bi-archive"></i> Tarihçede artık bulunmayan {{ orphanRates.length }} müşterinin tutarları saklanıyor ({{ orphanRates.join(', ') }}).
+                    <button class="btn btn-sm btn-outline-secondary ms-auto" @click="removeOrphanRates">Temizle</button>
                 </div>
             </div>
 
@@ -688,9 +640,9 @@
                     <div class="kpi-title">Tedarikçi Analizi <span class="badge bg-secondary" v-if="!hasSupplier">Tedarikçi tutarı girilmedi</span></div>
                     <div class="row row-cols-2 row-cols-lg-5 g-3 mb-3" v-if="hasSupplier">
                         <div class="col"><div class="kpi"><div class="kpi-l">Kendi Araçla Günlük Kâr<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Kendi Araçla Günlük Kâr')" @mouseleave="hideTip" @click="showTip($event, 'Kendi Araçla Günlük Kâr')"></i></div><div class="kpi-v" :class="netClass(view.cmp.ownProfit)">{{ money(view.cmp.ownProfit) }}</div>
-                            <div class="kpi-s">Müşteri {{ money(view.cmp.custDay) }} − kendi araç maliyeti {{ money(view.ownDayCost) }}</div></div></div>
+                            <div class="kpi-s">Eurocross {{ money(view.cmp.custDay) }} − kendi araç maliyeti {{ money(view.ownDayCost) }}</div></div></div>
                         <div class="col"><div class="kpi"><div class="kpi-l">Tedarikçiyle Günlük Kâr<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Tedarikçiyle Günlük Kâr')" @mouseleave="hideTip" @click="showTip($event, 'Tedarikçiyle Günlük Kâr')"></i></div><div class="kpi-v" :class="netClass(view.cmp.supProfit)">{{ money(view.cmp.supProfit) }}</div>
-                            <div class="kpi-s">Müşteri {{ money(view.cmp.custDay) }} − tedarikçi {{ money(view.cmp.supDay) }}</div></div></div>
+                            <div class="kpi-s">Eurocross {{ money(view.cmp.custDay) }} − tedarikçi {{ money(view.cmp.supDay) }}</div></div></div>
                         <div class="col"><div class="kpi kpi-hl"><div class="kpi-l">Kendi Aracın Günlük Avantajı<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Kendi Aracın Günlük Avantajı')" @mouseleave="hideTip" @click="showTip($event, 'Kendi Aracın Günlük Avantajı')"></i></div><div class="kpi-v" :class="netClass(view.cmp.adv)">{{ money(view.cmp.adv) }}</div>
                             <div class="kpi-s">{{ view.cmp.adv >= 0 ? 'Kendi aracı vermek daha kârlı' : 'Tedarikçiye vermek daha kârlı' }} · toplam {{ shortMoney(view.cmp.advTotal) }}</div></div></div>
                         <div class="col"><div class="kpi"><div class="kpi-l">Tedarikçiye Giden Dosya<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Tedarikçiye Giden Dosya')" @mouseleave="hideTip" @click="showTip($event, 'Tedarikçiye Giden Dosya')"></i></div><div class="kpi-v">{{ formatCurrency(view.sup.files) }} <small class="text-muted fs-6">dosya</small></div>

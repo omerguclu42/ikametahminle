@@ -14,6 +14,8 @@ const TARGETS = [50, 60, 70, 80, 90, 95, 100];
 const EMPTY_FILTERS = () => ({ year: [], month: [], seg: [], vid: [], cust: [] });
 const NO_CUST = ''; // müşteri bilgisi olmayan dosyalar
 const NO_CUST_LABEL = 'Müşterisi belirtilmemiş';
+const rateKey = c => c || E.NONE_KEY; // müşteri tutar tablosundaki anahtar
+const custLabel = c => c || NO_CUST_LABEL;
 const STAT_KEYS = ['total', 'handled', 'own', 'up', 'down', 'days'];
 /* Eski tek seçimli filtreleri ('all' / tek değer) diziye çevirir */
 function normFilters(f) {
@@ -285,7 +287,7 @@ const PAGE_META = {
     yakitVeEnflasyon: ['Yakıt & Enflasyon', 'Tahminleme yıllarını, enflasyon oranlarını ve yakıt fiyatlarını girin.'],
     tarihce: ['Tarihçe (Dosyalar)', 'Simülasyonun dayandığı dosya teslim / iade verisini yükleyin.'],
     iadeSaati: ['İade Dönüş Saati', 'Geç iade edilen aracın ertesi güne kalacağı saat sınırını belirleyin.'],
-    gunlukTutar: ['Günlük Tutar', 'Müşteri, segment ve yıla göre müşteriye yansıtılan ve tedarikçiye ödenen günlük tutarlar.'],
+    gunlukTutar: ['Günlük Tutar', 'Müşteri, segment ve yıla göre Eurocross Turkey günlük tutarı ve tedarikçiye ödenen günlük tutar.'],
     rehber: ['Çalışma Rehberi', 'Her sayfanın başlıkları ne işe yarar, hesaplar hangi mantıkla yapılır.']
 };
 const C = { orange: '#ff6600', orangeL: '#ffa94d', dark: '#343a40', grey: '#adb5bd', green: '#2b8a3e', red: '#e03131', blue: '#1c7ed6', purple: '#7048e8', amber: '#f59f00' };
@@ -339,7 +341,7 @@ const app = createApp({
             // Raporlama
             reportSeg: null,
             // Günlük Tutar: seçili müşteri ve kopyalama kaynağı
-            gtCust: null, gtCopyFrom: '__default',
+            gtCust: null, gtCopyFrom: null,
             sensP: 10, sensData: null, sensBusy: false, margData: {}, margBusy: false,
             ds: { type: 'dosya', status: 'all', search: '', page: 1, size: 50 }
         };
@@ -362,18 +364,20 @@ const app = createApp({
         hdrByName() { const o = {}; this.settings.giderTanimlari.forEach(h => { o[h.ad] = h; }); return o; },
         hasSupplier() {
             const pos = o => SEGMENTS.some(sg => this.years.some(y => Number(((o || {})[sg] || {})[y]) > 0));
-            return pos(this.settings.tedarikciTutar) || Object.values(this.settings.musteriTutar || {}).some(m => pos(m.tedarikci));
+            return Object.values(this.settings.musteriTutar || {}).some(m => pos(m.tedarikci));
         },
         /* Tarihçedeki müşteriler (tekrarsız): dosya sayısı ve segment dağılımıyla */
         histCustomers() {
-            const map = new Map(); let none = 0;
+            const map = new Map(), noneO = { c: NO_CUST, files: 0, segs: {} };
             this.historicalData.forEach(d => {
-                const c = d.musteri || NO_CUST; if (!c) { none++; return; }
-                const o = map.get(c) || { c, files: 0, segs: {} }; o.files++;
-                const sg = E.normSegment(d.segment); o.segs[sg] = (o.segs[sg] || 0) + 1; map.set(c, o);
+                const c = d.musteri || NO_CUST, sg = E.normSegment(d.segment);
+                const o = c ? (map.get(c) || { c, files: 0, segs: {} }) : noneO; o.files++;
+                o.segs[sg] = (o.segs[sg] || 0) + 1; if (c) map.set(c, o);
             });
-            return { list: [...map.values()].sort((a, b) => a.c.localeCompare(b.c, 'tr')), none };
+            return { list: [...map.values()].sort((a, b) => a.c.localeCompare(b.c, 'tr')), none: noneO.files, noneO };
         },
+        /* Günlük Tutar sayfasındaki liste: müşteriler + (varsa) müşterisi belirtilmemiş dosyalar */
+        rateCustomers() { const H = this.histCustomers; return [...H.list, ...(H.none ? [H.noneO] : [])]; },
         hasCustomers() { return this.histCustomers.list.length > 0; },
         /* Filtre ve tablolar için müşteri listesi; müşteri bilgisi olmayan dosya varsa "belirtilmemiş" de eklenir */
         customerList() { const H = this.histCustomers; return H.list.length ? [...H.list.map(x => x.c), ...(H.none ? [NO_CUST] : [])] : []; },
@@ -391,18 +395,20 @@ const app = createApp({
         custRateStatus() {
             const mt = this.settings.musteriTutar || {}, yrs = this.years, filled = x => x !== null && x !== undefined && x !== '';
             const out = {};
-            this.histCustomers.list.forEach(o => {
-                const e = mt[o.c] || {}, segs = Object.keys(o.segs).filter(sg => SEGMENTS.includes(sg));
+            this.rateCustomers.forEach(o => {
+                const e = mt[rateKey(o.c)] || {}, segs = Object.keys(o.segs).filter(sg => SEGMENTS.includes(sg));
                 const miss = k => segs.filter(sg => yrs.some(y => !filled(((e[k] || {})[sg] || {})[y])));
                 const own = miss('gunluk'), sup = miss('tedarikci');
                 out[o.c] = { own, sup, ok: !own.length, supOk: !sup.length, segs };
             });
             return out;
         },
-        custMissingOwn() { return this.histCustomers.list.filter(o => !this.custRateStatus[o.c].ok).map(o => o.c); },
-        custMissingSup() { return this.histCustomers.list.filter(o => !this.custRateStatus[o.c].supOk).map(o => o.c); },
-        custEntry() { return this.gtCust ? (this.settings.musteriTutar || {})[this.gtCust] || null : null; },
-        orphanRates() { const have = new Set(this.histCustomers.list.map(o => o.c)); return Object.keys(this.settings.musteriTutar || {}).filter(c => !have.has(c)); },
+        custMissingOwn() { return this.rateCustomers.filter(o => !this.custRateStatus[o.c].ok).map(o => custLabel(o.c)); },
+        custMissingSup() { return this.rateCustomers.filter(o => !this.custRateStatus[o.c].supOk).map(o => custLabel(o.c)); },
+        gtInfo() { return this.gtCust === null ? null : this.rateCustomers.find(o => o.c === this.gtCust) || null; },
+        noCustLabel() { return NO_CUST_LABEL; },
+        custEntry() { return this.gtCust === null ? null : (this.settings.musteriTutar || {})[rateKey(this.gtCust)] || null; },
+        orphanRates() { const have = new Set(this.rateCustomers.map(o => rateKey(o.c))); return Object.keys(this.settings.musteriTutar || {}).filter(k => !have.has(k)).map(k => (k === E.NONE_KEY ? NO_CUST_LABEL : k)); },
         /* Gelir hesabında tutarı bulunamayan müşteri / segment / yıllar (kısaltılmış metin) */
         missingRatesText() {
             const L = this.report.missingRates; if (!L.length) return '';
@@ -451,8 +457,7 @@ const app = createApp({
                     && (!this.fuelHeaders.length || (fuels.length ? fuels : FUELS).every(f => yrs.every(y => Number(s.yakitFiyatlari[f][y]) > 0))),
                 tarihce: this.historicalData.length > 0,
                 iadeSaati: true,
-                gunlukTutar: this.hasCustomers ? !this.custMissingOwn.length
-                    : segs.length > 0 && segs.every(sg => yrs.every(y => Number((s.gunlukTutar[sg] || {})[y]) > 0))
+                gunlukTutar: this.rateCustomers.length > 0 && !this.custMissingOwn.length
             };
         },
 
@@ -928,7 +933,7 @@ const app = createApp({
             const fs = V.files, k = V.cmp || {}, gider = t.cost + t.pers;
             return {
                 'Araç Satış Geliri': `Optimum satış yılını dolduran araçların satış tutarı, satış yılında gelir yazılır.\nAraç ömrü tanımlı yıllardan uzunsa satış hesaba katılmaz. Ay filtresi seçiliyken dahil edilmez.\nToplam: ${m(t.sale)}`,
-                'Dosya Geliri': `Her dosya için: kiralama günü × günlük tutar.\nKiralama günü tam gündür (24 saat + 3 saati aşan kalan 1 gün). Yıl sonuna sarkan dosya (ör. 25 Aralık teslim, 2 Ocak iade = 8 gün) tamamen başladığı yılın tutarıyla ve teslimat ayına gelir yazılır.\nGünlük tutar dosyanın müşterisine göre alınır; müşteriye tutar girilmemişse varsayılan segment tutarı kullanılır.\nMüşteri filtresi seçiliyken yalnızca o müşterilerin dosyalarının geliri; giderler araç başına müşterinin kiralama günü payıyla dağıtılır.\nÜst segment verilen dosya talep edilen segmentin, alt segment verilen dosya verilen segmentin tutarıyla fiyatlanır.\nGün sayımı: tam 24 saatler + 3 saatten fazla artan süre 1 gün.\nToplam: ${f(t.work)} gün → ${m(t.revenue)}`,
+                'Dosya Geliri': `Her dosya için: kiralama günü × günlük tutar.\nKiralama günü tam gündür (24 saat + 3 saati aşan kalan 1 gün). Yıl sonuna sarkan dosya (ör. 25 Aralık teslim, 2 Ocak iade = 8 gün) tamamen başladığı yılın tutarıyla ve teslimat ayına gelir yazılır.\nGünlük tutar, Günlük Tutar sayfasında dosyanın müşterisi için girilen Eurocross Turkey günlük tutarıdır; girilmemişse gelir 0 hesaplanır.\nMüşteri filtresi seçiliyken yalnızca o müşterilerin dosyalarının geliri; giderler araç başına müşterinin kiralama günü payıyla dağıtılır.\nÜst segment verilen dosya talep edilen segmentin, alt segment verilen dosya verilen segmentin tutarıyla fiyatlanır.\nGün sayımı: tam 24 saatler + 3 saatten fazla artan süre 1 gün.\nToplam: ${f(t.work)} gün → ${m(t.revenue)}`,
                 'Araç İşletme Gideri': `Araç gider başlıklarının yıllık tutarları × araç adedi.\nYıllık tutar: baz yıl girilen tutar, sonraki yıllar enflasyonla artar. Km bazlı (bakım), ömür boyu adet (lastik), yılda adet (temizlik), tek seferlik ve yakıt km başlıkları kendi kurallarıyla hesaplanır. Araç başı detay: araç kartında "İncele".\nToplam: ${m(t.op)}`,
                 'Alış Gideri': `Araç alış bedelinin anapara kısmı.\nPeşin: tamamı ilk kullanım yılına. Kredili: her yıl ödenen taksitlerin anapara kısmı; kredi araç ömründen uzunsa kalan anapara satış yılında kapatılır.\nToplam: ${m(t.buy)}`,
                 'Faiz Gideri': `Kredili araçların taksitlerindeki faiz kısmı (eşit taksit; aylık faiz = yıllık faiz ÷ 12). Taksit ödendiği yıla yazılır.\nToplam: ${m(t.int)}`,
@@ -942,8 +947,8 @@ const app = createApp({
                 'Ortalama Gün': `Veri dönemindeki her gün (işlem olmayan günler dahil) teslimat + iade ortalaması.\n${this.formatCurrency(this.opsLoad.days)} gün üzerinden.`,
                 'En Sakin Gün': `Teslimat + iade toplamının en az olduğu gün (dönem içindeki işlem olmayan günler dahil).`,
                 'Personel Başına Günlük İşlem': `Her personel haftada 6 gün çalışır, 1 gün izinlidir; günde ortalama aktif personel = personel × 6 / 7.\nOrtalama: günlük ortalama işlem ÷ aktif personel = ${this.fmt1(this.opsLoad.avgTotal)} ÷ ${this.fmt1(this.opsLoad.active)} = ${this.fmt1(this.opsLoad.perAvg)}\nEn yoğun gün: ${this.formatCurrency(this.opsLoad.max.total)} ÷ ${this.fmt1(this.opsLoad.active)} = ${this.fmt1(this.opsLoad.perMax)}`,
-                'Kendi Araçla Günlük Kâr': `Müşteriye yansıtılan ortalama günlük tutar − kendi aracımızın günlük maliyeti.\n${m(k.custDay)} − ${m(V.ownDayCost)} = ${m(k.ownProfit)}\nKendi araç günlük maliyeti = (işletme + alış + faiz + personel − araç satışı) ÷ çalışılan gün = ${sm(gider - t.sale)} ÷ ${f(t.work)}`,
-                'Tedarikçiyle Günlük Kâr': `Aynı dosyaları tedarikçiye verseydik: müşteriye yansıtılan ortalama günlük tutar − tedarikçinin ortalama günlük tutarı.\n${m(k.custDay)} − ${m(k.supDay)} = ${m(k.supProfit)}\nOrtalamalar, kendi aracımızın çalıştığı günlerin segment / yıl dağılımıyla ağırlıklandırılır.`,
+                'Kendi Araçla Günlük Kâr': `Eurocross Turkey ortalama günlük tutarı − kendi aracımızın günlük maliyeti.\n${m(k.custDay)} − ${m(V.ownDayCost)} = ${m(k.ownProfit)}\nKendi araç günlük maliyeti = (işletme + alış + faiz + personel − araç satışı) ÷ çalışılan gün = ${sm(gider - t.sale)} ÷ ${f(t.work)}`,
+                'Tedarikçiyle Günlük Kâr': `Aynı dosyaları tedarikçiye verseydik: Eurocross Turkey ortalama günlük tutarı − tedarikçinin ortalama günlük tutarı.\n${m(k.custDay)} − ${m(k.supDay)} = ${m(k.supProfit)}\nOrtalamalar, kendi aracımızın çalıştığı günlerin segment / yıl dağılımıyla ağırlıklandırılır.`,
                 'Kendi Aracın Günlük Avantajı': `Kendi araçla günlük kâr − tedarikçiyle günlük kâr = tedarikçi günlük tutarı − kendi araç günlük maliyeti.\n${m(k.supDay)} − ${m(V.ownDayCost)} = ${m(k.adv)}\nPozitifse araç almak tedarikçiye vermekten kârlı.\nToplam etki = günlük avantaj × çalışılan gün = ${m(k.advTotal)}`,
                 'Tedarikçiye Giden Dosya': `Kendi aracımızla karşılanamayan ve tedarikçiye verilen dosyalar.\nMarj = gün × (müşteri günlük tutarı − tedarikçi günlük tutarı), yıllar toplamı.\nMüşteri ${m(V.sup.revenue)} − tedarikçi ${m(V.sup.cost)} = ${m(V.sup.margin)}\nTedarikçi tutarı girilmemiş segment / yıldaki dosyalar kayıp sayılır.`,
                 'Şirket Toplam Neti': `Filo neti + tedarikçiye giden dosyalardan kalan marj.\n${m(t.net)} + ${m(V.sup.margin)} = ${m(V.companyNet)}`,
@@ -1164,8 +1169,9 @@ const app = createApp({
         // Tarihçeden kalkan müşteri filtreden düşer; Günlük Tutar sayfasında seçili müşteri her zaman listede olur
         this.$watch(() => this.customerList.join('|'), () => {
             const ok = new Set(this.customerList); const nc = this.filters.cust.filter(c => ok.has(c)); if (nc.length !== this.filters.cust.length) this.filters.cust = nc;
-            const L = this.histCustomers.list; if (L.length && !L.some(o => o.c === this.gtCust)) this.gtCust = L[0].c; if (!L.length) this.gtCust = null;
+            const L = this.rateCustomers; if (L.length && !L.some(o => o.c === this.gtCust)) this.gtCust = L[0].c; if (!L.length) this.gtCust = null;
         }, { immediate: true });
+        this.$watch(() => this.rateCustomers.map(o => o.c).join('|'), () => { const L = this.rateCustomers; if (L.length && !L.some(o => o.c === this.gtCust)) this.gtCust = L[0].c; if (!L.length) this.gtCust = null; }, { immediate: true });
         this.$watch(() => [this.gtCust, this.authed, !!this.custEntry], () => this.ensureCustEntry(this.gtCust), { immediate: true });
         this.$watch(() => this.activeTab, () => { const mc = document.querySelector('.main-content'); if (mc) mc.scrollTop = 0; this.headerError = ''; this.newHeader = ''; this.newCategory = ''; this.newAmount = null; this.newTip = 'yillik'; });
         if (window.CloudSync && window.CloudSync.enabled) window.CloudSync.init(this);
@@ -1418,35 +1424,42 @@ const app = createApp({
 
         /* ---- Müşteri bazlı günlük tutarlar ---- */
         ensureCustEntry(c) {
-            if (!c || !this.authed) return;
-            const mt = this.settings.musteriTutar || (this.settings.musteriTutar = {});
-            if (!mt[c]) mt[c] = fillCustRates({}, this.years);
+            if (c === null || c === undefined || !this.authed) return;
+            const mt = this.settings.musteriTutar || (this.settings.musteriTutar = {}), k = rateKey(c);
+            if (!mt[k]) mt[k] = fillCustRates({}, this.years);
+        },
+        /* Günlük marj hücresi: yalnızca iki tutar da girilmişse */
+        marginCell(s, y) {
+            const e = this.custEntry, ok = x => x !== null && x !== undefined && x !== '';
+            const r = e && e.gunluk[s] ? e.gunluk[s][y] : null, t = e && e.tedarikci[s] ? e.tedarikci[s][y] : null;
+            if (!ok(r) || !ok(t) || !(Number(t) > 0)) return { text: '-', cls: 'text-muted' };
+            const m = Number(r) - Number(t);
+            return { text: this.money(m) + ' (' + this.pct(Number(r) ? m / Number(r) * 100 : 0) + ')', cls: this.netClass(m) };
         },
         custOptionLabel(o) {
-            const st = this.custRateStatus[o.c], base = `${o.c} · ${this.formatCurrency(o.files)} dosya`;
+            const st = this.custRateStatus[o.c], base = `${custLabel(o.c)} · ${this.formatCurrency(o.files)} dosya`;
             if (!st) return base;
             if (!st.ok) return `⚠ ${base} · günlük tutar eksik`;
             return st.supOk ? `✓ ${base}` : `✓ ${base} · tedarikçi tutarı eksik`;
         },
-        /* Seçili müşterinin tutarlarını varsayılan tablodan ya da başka bir müşteriden kopyalar */
+        /* Seçili müşterinin tutarlarını başka bir müşteriden kopyalar */
         async copyCustRates() {
-            const c = this.gtCust, src = this.gtCopyFrom; if (!c || !src || src === c) return;
-            const from = src === '__default' ? { gunluk: this.settings.gunlukTutar, tedarikci: this.settings.tedarikciTutar } : (this.settings.musteriTutar || {})[src];
-            if (!from) return;
-            const srcName = src === '__default' ? 'varsayılan tutarlar' : `'${src}'`;
-            if (!await this.askConfirm(`'${c}' müşterisinin kendi ve tedarikçi günlük tutarları ${srcName} ile değiştirilecek. Devam edilsin mi?`)) return;
-            this.settings.musteriTutar[c] = fillCustRates(JSON.parse(JSON.stringify({ gunluk: from.gunluk || {}, tedarikci: from.tedarikci || {} })), this.years);
-            this.notify(`${srcName} '${c}' müşterisine kopyalandı`);
+            const c = this.gtCust, src = this.gtCopyFrom; if (c === null || src === null || src === c) return;
+            const from = (this.settings.musteriTutar || {})[rateKey(src)];
+            if (!from) { this.notify(`'${custLabel(src)}' için girilmiş tutar yok`); return; }
+            if (!await this.askConfirm(`'${custLabel(c)}' için Eurocross Turkey ve tedarikçi günlük tutarları '${custLabel(src)}' tutarlarıyla değiştirilecek. Devam edilsin mi?`)) return;
+            this.settings.musteriTutar[rateKey(c)] = fillCustRates(JSON.parse(JSON.stringify({ gunluk: from.gunluk || {}, tedarikci: from.tedarikci || {} })), this.years);
+            this.notify(`'${custLabel(src)}' tutarları '${custLabel(c)}' için kopyalandı`);
         },
         /* Seçili müşterinin tutarlarını tutarı eksik olan (veya tüm) müşterilere uygular */
         async applyCustRatesToAll(onlyMissing) {
-            const c = this.gtCust, e = this.custEntry; if (!c || !e) return;
-            const targets = this.histCustomers.list.map(o => o.c).filter(x => x !== c && (!onlyMissing || !this.custRateStatus[x].ok || !this.custRateStatus[x].supOk));
+            const c = this.gtCust, e = this.custEntry; if (c === null || !e) return;
+            const targets = this.rateCustomers.map(o => o.c).filter(x => x !== c && (!onlyMissing || !this.custRateStatus[x].ok || !this.custRateStatus[x].supOk));
             if (!targets.length) { this.notify('Uygulanacak müşteri yok'); return; }
-            if (!await this.askConfirm(`'${c}' müşterisinin tutarları ${onlyMissing ? 'tutarı eksik olan' : 'diğer tüm'} ${targets.length} müşteriye kopyalanacak${onlyMissing ? ' (yalnızca boş hücreler doldurulur)' : ' (mevcut tutarlarının üzerine yazılır)'}. Devam edilsin mi?`)) return;
+            if (!await this.askConfirm(`'${custLabel(c)}' tutarları ${onlyMissing ? 'tutarı eksik olan' : 'diğer tüm'} ${targets.length} müşteriye kopyalanacak${onlyMissing ? ' (yalnızca boş hücreler doldurulur)' : ' (mevcut tutarlarının üzerine yazılır)'}. Devam edilsin mi?`)) return;
             const empty = x => x === null || x === undefined || x === '';
             targets.forEach(t => {
-                this.ensureCustEntry(t); const d = this.settings.musteriTutar[t];
+                this.ensureCustEntry(t); const d = this.settings.musteriTutar[rateKey(t)];
                 ['gunluk', 'tedarikci'].forEach(k => SEGMENTS.forEach(sg => this.years.forEach(y => {
                     const v = ((e[k] || {})[sg] || {})[y];
                     if (!onlyMissing || empty(d[k][sg][y])) d[k][sg][y] = v === undefined ? null : v;
@@ -1457,7 +1470,7 @@ const app = createApp({
         async removeOrphanRates() {
             const L = this.orphanRates; if (!L.length) return;
             if (!await this.askConfirm(`Tarihçede artık bulunmayan ${L.length} müşterinin (${L.join(', ')}) günlük tutarları silinecek. Devam edilsin mi?`)) return;
-            L.forEach(c => { delete this.settings.musteriTutar[c]; });
+            L.forEach(c => { delete this.settings.musteriTutar[c === NO_CUST_LABEL ? E.NONE_KEY : c]; });
         },
 
         /* ---- Araç ---- */
@@ -1714,8 +1727,8 @@ const app = createApp({
             const sMod = fn => k => { const st = clone(this.settings); fn(st, k); return [st, baseV, g0]; };
             const opHeads = this.settings.giderTanimlari.filter(h => h.tip !== 'yakit').map(h => h.ad);
             const items = [
-                ['Müşteri günlük tutarı', sMod((st, k) => { scaleMap(st.gunlukTutar, k); Object.values(st.musteriTutar || {}).forEach(m => scaleMap(m.gunluk, k)); })],
-                ...(this.hasSupplier ? [['Tedarikçi günlük tutarı', sMod((st, k) => { scaleMap(st.tedarikciTutar, k); Object.values(st.musteriTutar || {}).forEach(m => scaleMap(m.tedarikci, k)); })]] : []),
+                ['Eurocross Turkey günlük tutarı', sMod((st, k) => { Object.values(st.musteriTutar || {}).forEach(m => scaleMap(m.gunluk, k)); })],
+                ...(this.hasSupplier ? [['Tedarikçi günlük tutarı', sMod((st, k) => { Object.values(st.musteriTutar || {}).forEach(m => scaleMap(m.tedarikci, k)); })]] : []),
                 ['Araç alış bedeli', vMod((v, k) => { if (v.alisBedeli !== null) v.alisBedeli = Number(v.alisBedeli) * k; })],
                 ['Araç satış tutarı', vMod((v, k) => { if (v.satisTutari !== null) v.satisTutari = Number(v.satisTutari) * k; })],
                 ['Araç işletme giderleri', vMod((v, k) => opHeads.forEach(h => { if (v.giderler[h] !== null && v.giderler[h] !== undefined) v.giderler[h] = Number(v.giderler[h]) * k; }))],

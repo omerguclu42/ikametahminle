@@ -94,22 +94,22 @@
     }
 
     /* ---------- Günlük tutarlar ----------
-       Müşteriye özel tutar girilmişse o kullanılır; girilmemişse varsayılan (müşterisiz) segment tutarı.
+       Tutarlar yalnızca müşteri bazında girilir (varsayılan tutar yoktur); girilmeyen hücre 0 sayılır.
+       Müşterisi belirtilmemiş dosyalar NONE_KEY anahtarıyla ayrı bir "müşteri" olarak fiyatlanır.
        settings.musteriTutar = { 'Müşteri Adı': { gunluk: {seg: {yıl: tutar}}, tedarikci: {seg: {yıl: tutar}} } } */
+    const NONE_KEY = '__musterisiz__';
     function makeRates(settings) {
-        const mt = (settings && settings.musteriTutar) || {}, gt = (settings && settings.gunlukTutar) || {}, ts = (settings && settings.tedarikciTutar) || {};
+        const mt = (settings && settings.musteriTutar) || {};
         const cache = new Map();
-        const pick = (kind, def, c, sg, y) => {
+        const cell = (kind, c, sg, y) => { const o = mt[c || NONE_KEY]; return o && o[kind] && o[kind][sg] ? o[kind][sg][y] : null; };
+        const pick = (kind, c, sg, y) => {
             const k = kind + '\t' + c + '\t' + sg + '\t' + y;
             let v = cache.get(k);
-            if (v !== undefined) return v;
-            const o = c ? mt[c] : null, t = o && o[kind] && o[kind][sg] ? o[kind][sg][y] : null;
-            v = filled(t) ? num(t) : num((def[sg] || {})[y]);
-            cache.set(k, v); return v;
+            if (v === undefined) { const t = cell(kind, c, sg, y); v = filled(t) ? num(t) : 0; cache.set(k, v); }
+            return v;
         };
-        const own = (c, sg, y) => { const o = c ? mt[c] : null, t = o && o.gunluk && o.gunluk[sg] ? o.gunluk[sg][y] : null; return filled(t); };
-        const ownSup = (c, sg, y) => { const o = c ? mt[c] : null, t = o && o.tedarikci && o.tedarikci[sg] ? o.tedarikci[sg][y] : null; return filled(t); };
-        return { rate: (c, sg, y) => pick('gunluk', gt, c || '', sg, y), sup: (c, sg, y) => pick('tedarikci', ts, c || '', sg, y), own, ownSup };
+        return { rate: (c, sg, y) => pick('gunluk', c || '', sg, y), sup: (c, sg, y) => pick('tedarikci', c || '', sg, y),
+            own: (c, sg, y) => filled(cell('gunluk', c, sg, y)), ownSup: (c, sg, y) => filled(cell('tedarikci', c, sg, y)) };
     }
     const KEY_SEP = '\t';
     const priceKey = (sg, c) => sg + KEY_SEP + (c || '');
@@ -538,7 +538,7 @@
         const missingRates = new Set(), unsold = new Set();
         const revOf = (price, y) => Object.keys(price).reduce((a, k) => {
             const [sg, c] = splitKey(k), r = RT.rate(c, sg, y);
-            if (!r) missingRates.add(c ? `${c} · ${sg} / ${y}` : `${sg} / ${y}`);
+            if (!r) missingRates.add(`${c || 'Müşterisi belirtilmemiş'} · ${sg} / ${y}`);
             return a + price[k] * scale * r;
         }, 0);
         const plates = units.map(u => {
@@ -575,7 +575,7 @@
     }
 
     const api = { SEGMENTS, FUELS, DEFAULT_HEADERS, parseDate, formatDate, normSegment, normCustomer, parseCSV, rowsToRecords, tableToRows, missingHeaders, hasCustomerColumn,
-        makeRates, priceKey, splitKey,
+        makeRates, priceKey, splitKey, NONE_KEY,
         sortedYears, inflationFactors, loanSchedule, costTable, COST_TYPES, costType, personnelTable, missingFields, isVehicleComplete, simulate, fleetCurve, dailyPeaks,
         freeAtOf, buildReport, rentDays, adjustFiles };
     if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;
