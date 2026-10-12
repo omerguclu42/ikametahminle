@@ -108,8 +108,9 @@
             if (v === undefined) { const t = cell(kind, c, sg, y); v = filled(t) ? num(t) : 0; cache.set(k, v); }
             return v;
         };
-        return { rate: (c, sg, y) => pick('gunluk', c || '', sg, y), sup: (c, sg, y) => pick('tedarikci', c || '', sg, y),
-            own: (c, sg, y) => filled(cell('gunluk', c, sg, y)), ownSup: (c, sg, y) => filled(cell('tedarikci', c, sg, y)) };
+        // Tedarikçi hesabı kullanılmıyor: yalnızca kendi filomuzla karşılanan dosyalar hesaplanır (tedarikçi tutarı her zaman 0)
+        return { rate: (c, sg, y) => pick('gunluk', c || '', sg, y), sup: () => 0,
+            own: (c, sg, y) => filled(cell('gunluk', c, sg, y)), ownSup: () => false };
     }
     const KEY_SEP = '\t';
     const priceKey = (sg, c) => sg + KEY_SEP + (c || '');
