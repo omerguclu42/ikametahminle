@@ -525,8 +525,9 @@
             <!-- ================= Tahminleme Simülatörü ================= -->
             <div v-if="activeTab === 'tahminleme'">
                 <div class="small text-muted mb-3"><i class="bi bi-clock-history text-orange"></i> İade saati sınırı: <b>{{ String(timeRule).padStart(2,'0') }}:00</b>
-                    · Tarihçe: <b>{{ formatCurrency(historicalData.length) }}</b> dosya<span v-if="spanInfo"> ({{ spanInfo }} gün)</span>
+                    · Tarihçe: <b>{{ formatCurrency(historicalData.length) }}</b> dosya<span v-if="spanInfo"> (teslimatlar {{ spanRange }}, {{ spanInfo }} gün)</span>
                     · Yıllar: <b>{{ years[0] }}–{{ years[years.length - 1] }}</b></div>
+                <div class="alert alert-warning py-2 small" v-if="spanInfo > 370"><i class="bi bi-exclamation-triangle"></i> Teslimat tarihleri 1 yıldan uzun bir dönemi kapsıyor ({{ spanRange }}, {{ spanInfo }} gün). Sonuçlar 365 güne oranlanıyor (dosya, gün ve gelir × {{ (365 / spanInfo).toLocaleString('tr-TR', {maximumFractionDigits: 3}) }}). Tarihçede yılı yanlış girilmiş bir tarih olup olmadığını kontrol edin.</div>
                 <div class="alert alert-info py-2 small" v-if="spanInfo && spanInfo < 355">Tarihçe {{ spanInfo }} günü kapsıyor; çalışılan/boşta gün ve gelir bu süreye göre hesaplanır (365 güne oranlanmaz). Tam yıllık veri yüklediğinizde 365 gün esas alınır.</div>
 
                 <div class="card shadow-sm border-0 mb-3" v-if="!vehicles.length || !historicalData.length">

@@ -835,6 +835,7 @@ const app = createApp({
             return out;
         },
         spanInfo() { const d = this.report.sim.spanDays; return d ? Math.round(d) : 0; },
+        spanRange() { const S = this.report.sim, d = t => new Date(t).toLocaleDateString('tr-TR'); return S.totalFiles ? d(S.minS) + ' – ' + d(S.maxS) : ''; },
 
         /* ================= Raporlama ================= */
         curveSegs() { return SEGMENTS.filter(s => (this.report.curves[s] || {}).total > 0); },

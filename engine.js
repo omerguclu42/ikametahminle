@@ -261,6 +261,16 @@
         return `34 ${a}${b} ${100 + n + 1}`;
     }
     const sortFiles = files => files.slice().sort((a, b) => a.s - b.s || a.e - b.e);
+    /* Verinin kapsadığı dönem: ilk teslimat gününden son teslimat gününe (iki gün dahil).
+       İade tarihi sayılmaz: Aralık'ta başlayıp Ocak'ta dönen kiralamalar dönemi uzatmaz. */
+    function deliverySpan(files) {
+        if (!files.length) return { days: 0, minS: null, maxS: null };
+        let lo = Infinity, hi = -Infinity;
+        files.forEach(f => { if (f.s < lo) lo = f.s; if (f.s > hi) hi = f.s; });
+        const d0 = new Date(lo), d1 = new Date(hi);
+        const days = Math.round((Date.UTC(d1.getFullYear(), d1.getMonth(), d1.getDate()) - Date.UTC(d0.getFullYear(), d0.getMonth(), d0.getDate())) / DAY) + 1;
+        return { days, minS: lo, maxS: hi };
+    }
     const segIdx = s => SEGMENTS.indexOf(s);
 
     /* Bir segmentin talebi, sınırsız araçla "en küçük sıradaki boş araca ver" kuralıyla dağıtılır.
@@ -352,8 +362,8 @@
                 }
             });
         }
-        const spanDays = sorted.length ? Math.max(1, (maxE - minS) / DAY) : 0;
-        return { byUnit, segStats, assign, spanDays, totalFiles: sorted.length, minS, maxE, dataYear: sorted.length ? new Date(minS).getFullYear() : null };
+        const ds = deliverySpan(sorted);
+        return { byUnit, segStats, assign, spanDays: ds.days, totalFiles: sorted.length, minS, maxS: ds.maxS, maxE, dataYear: sorted.length ? new Date(minS).getFullYear() : null };
     }
 
     /* Hizmet sayısı değişimi (%): her segmentin dosyaları teslim zamanına göre sıralanır ve
@@ -417,10 +427,9 @@
         const vIndex = v => vehicles.indexOf(v);
         const baseCount = v => Math.max(0, Math.floor(num(countsOverride ? countsOverride[v.id] : v.count)));
 
-        // Dönem: tarihçe 1 yıllıksa (≥355 gün) 365 gün; kısaysa gerçek süre. 370 günden uzun veri yıllığa çevrilir.
-        let minS = Infinity, maxE = -Infinity;
-        files.forEach(f => { if (f.s < minS) minS = f.s; if (f.e > maxE) maxE = f.e; });
-        const span = files.length ? Math.max(1, (maxE - minS) / DAY) : 0;
+        // Dönem: teslimat tarihlerinin kapsadığı gün (ilk teslimat → son teslimat). 1 yıllıksa (≥355 gün) 365 gün;
+        // kısaysa gerçek süre. 370 günden uzun teslimat dönemi yıllığa çevrilir.
+        const span = files.length ? Math.max(1, deliverySpan(files).days) : 0;
         const period = span >= 355 ? YEAR_DAYS : Math.max(1, Math.round(span));
         const scale = span > 370 ? YEAR_DAYS / span : 1;
         const RT = makeRates(settings);
