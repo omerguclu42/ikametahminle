@@ -670,8 +670,13 @@ const app = createApp({
             const base = this.settings.personelTanimlari.reduce((a, h) => a + (Number(h.tutar) || 0), 0), count = Number(this.settings.personelSayisi) || 0;
             const perPerson = {}, totals = {};
             this.years.forEach(y => { perPerson[y] = base * k[y]; totals[y] = base * k[y] * count; });
+            // Kalem bazlı kişi başı yıllık gider (enflasyonlu); Maaş satırı en üstte
+            const items = [...this.settings.personelTanimlari].sort((a, b) => (b.maas ? 1 : 0) - (a.maas ? 1 : 0)).map(h => {
+                const vals = {}; this.years.forEach(y => { vals[y] = (Number(h.tutar) || 0) * k[y]; });
+                return { ad: h.ad, kategori: h.kategori || 'Diğer', maas: !!h.maas, vals, share: base ? (Number(h.tutar) || 0) / base * 100 : 0 };
+            });
             const ratio = Number(this.settings.personelOrani) || 0;
-            return { count, perPerson, totals, fleet: this.totalPlates, suggested: ratio > 0 ? Math.ceil(this.totalPlates / ratio) : null };
+            return { count, items, perPerson, totals, fleet: this.totalPlates, suggested: ratio > 0 ? Math.ceil(this.totalPlates / ratio) : null };
         },
 
         brandOptions() {

@@ -425,3 +425,8 @@ tr.cursor-pointer:hover { background: #fff4ec; }
 /* SLA */
 .sla-table select.sla-on { border-color: #f59f00; background-color: #fff9db; font-weight: 600; }
 .sla-table th, .sla-table td { white-space: nowrap; }
+
+/* Personel kalem tablosu */
+.pers-table tfoot td { border-top: 0; }
+.pers-table tfoot .pers-sub td { background: #f8f9fa; border-top: 2px solid #dee2e6; }
+.pers-table tfoot .pers-tot td { background: #fff4ec; }

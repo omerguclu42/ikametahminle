@@ -150,13 +150,21 @@
                             <span v-if="!settings.personelKilit && persSummary.suggested === null" class="text-danger">Otomatik için "Kaç araca 1 personel" alanını doldurun.</span></div>
                         <div class="small text-muted mt-1">Her başlığın tutarı <b>kişi başı yıllık</b> girilir; gider = tutar × personel sayısı. Enflasyonla yıllara göre artar ve simülatörde araçlara aldıkları dosya oranında dağıtılır.</div>
                         <div class="table-responsive mt-3" v-if="settings.personelTanimlari.length">
-                            <table class="table table-sm text-end mb-0">
-                                <thead class="table-light"><tr><th class="text-start"></th><th v-for="y in years" :key="y">{{ y }}</th></tr></thead>
+                            <table class="table table-sm text-end mb-0 pers-table">
+                                <thead class="table-light"><tr><th class="text-start">Gider kalemi (kişi başı yıllık)</th><th class="text-start">Kategori</th><th>Pay</th><th v-for="y in years" :key="y">{{ y }}</th></tr></thead>
                                 <tbody>
-                                    <tr><td class="text-start">Kişi başı yıllık</td><td v-for="y in years" :key="y">{{ money(persSummary.perPerson[y]) }}</td></tr>
-                                    <tr class="fw-bold"><td class="text-start">Toplam personel gideri ({{ persSummary.count }} kişi)</td><td v-for="y in years" :key="y" class="text-orange">{{ money(persSummary.totals[y]) }}</td></tr>
+                                    <tr v-for="it in persSummary.items" :key="it.ad"><td class="text-start">{{ it.ad }}<span v-if="it.maas" class="small text-muted"> (brüt × çarpan × 12)</span></td>
+                                        <td class="text-start"><span class="badge bg-light text-dark border">{{ it.kategori }}</span></td>
+                                        <td class="text-muted">%{{ fmt1(it.share) }}</td>
+                                        <td v-for="y in years" :key="y">{{ moneyTL(it.vals[y]) }}</td></tr>
                                 </tbody>
+                                <tfoot>
+                                    <tr class="fw-bold pers-sub"><td class="text-start" colspan="2">Kişi başı yıllık gider</td><td>%100</td><td v-for="y in years" :key="y">{{ moneyTL(persSummary.perPerson[y]) }}</td></tr>
+                                    <tr class="text-muted"><td class="text-start" colspan="3">× Personel sayısı</td><td v-for="y in years" :key="y">{{ persSummary.count }} kişi</td></tr>
+                                    <tr class="fw-bold pers-tot"><td class="text-start" colspan="3">Toplam personel gideri ({{ persSummary.count }} kişi)</td><td v-for="y in years" :key="y" class="text-orange">{{ moneyTL(persSummary.totals[y]) }}</td></tr>
+                                </tfoot>
                             </table>
+                            <div class="small text-muted mt-1">İlk yıl girilen tutarlardır; sonraki yıllar Yakıt &amp; Enflasyon sayfasındaki enflasyon oranıyla artar.</div>
                         </div>
                     </div>
                 </div>
