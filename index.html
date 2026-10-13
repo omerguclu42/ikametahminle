@@ -438,7 +438,7 @@
                                         </tbody>
                                     </table>
                                 </div>
-                                <div class="small text-muted mt-2">Hücre altındaki <b>başabaş</b>: bu müşteriye bu segmentte bir kiralama gününün bize maliyeti. Günlük tutar bunun üzerindeyse <span class="text-success">kâr</span>, altındaysa <span class="text-danger">zarar</span> edilir.</div>
+                                <div class="small text-muted mt-2">Hücre altındaki <b>başabaş</b>: bu müşteriye bu segmentte bir kiralama gününün bize maliyeti (segmentin araç maliyeti + müşterinin kiralama süresine göre personel maliyeti). Günlük tutar bunun üzerindeyse <span class="text-success">kâr</span>, altındaysa <span class="text-danger">zarar</span> edilir.</div>
                             </div>
                             <div class="col-xxl-7 col-xl-6">
                                 <div class="price-lab" v-if="selCell">
@@ -462,7 +462,7 @@
                                         <div class="pl-kpi"><span>Dosya Başı Gider</span><i class="bi bi-info-circle kpi-info" @mouseenter="showTipText($event, priceTips.fileCost)" @mouseleave="hideTip" @click="showTipText($event, priceTips.fileCost)"></i><b class="text-danger">{{ selCell.costDay === null ? '-' : money(selCell.costDay * selCell.avgDays) }}</b></div>
                                         <div class="pl-kpi hl"><span>Dosya Başı Kâr</span><i class="bi bi-info-circle kpi-info" @mouseenter="showTipText($event, priceTips.fileProfit)" @mouseleave="hideTip" @click="showTipText($event, priceTips.fileProfit)"></i><b :class="selCell.fileProfit === undefined ? '' : netClass(selCell.fileProfit)">{{ selCell.fileProfit === undefined ? '-' : money(selCell.fileProfit) }}</b></div>
                                     </div>
-                                    <div class="small text-muted mt-2" v-if="selCell.breakdown">Gün başı maliyet = işletme {{ money(selCell.breakdown.op) }} + personel {{ money(selCell.breakdown.pers) }} + alış / faiz − satış {{ money(selCell.breakdown.capex) }} (araç ömrüne eşit dağıtılmış){{ selCell.all ? '' : ' · ' + selCell.plates + ' araç' }}</div>
+                                    <div class="small text-muted mt-2" v-if="selCell.breakdown">Gün başı maliyet = araç {{ money(selCell.breakdown.op + selCell.breakdown.capex) }} (işletme {{ money(selCell.breakdown.op) }} + alış / faiz − satış {{ money(selCell.breakdown.capex) }}, segment ortalaması{{ selCell.all ? '' : ', ' + selCell.plates + ' araç' }}) + personel {{ money(selCell.breakdown.pers) }} (dosya başı personel ÷ ortalama kiralama süresi)</div>
                                     <div class="pl-year mt-2" v-if="selCell.handled">
                                         <b>{{ selCell.all ? 'Tüm yıllar toplamı (kendi filomuzla):' : selCell.y + ' tahmini (' + selCell.sg + ', kendi filomuzla):' }}</b> <i class="bi bi-info-circle h-info" @mouseenter="showTipText($event, priceTips.year)" @mouseleave="hideTip" @click="showTipText($event, priceTips.year)"></i> {{ formatCurrency(selCell.handled) }} dosya · {{ formatCurrency(selCell.days) }} kiralama günü ·
                                         gelir <span class="text-success">{{ shortMoney(selCell.rev || 0) }}</span> · gider <span class="text-danger">{{ shortMoney(selCell.cost || 0) }}</span> ·
@@ -549,7 +549,7 @@
                                     </tbody>
                                 </table>
                             </div>
-                            <div class="small text-muted mt-2">Gün başı maliyet, Tahminleme Simülatörü'ndeki mevcut filo ve doluluğa göre hesaplanır: bu müşterinin dosyalarına çalışan araçların işletme gideri + personel payı + (alış + faiz − satış) ÷ araç ömrü (yıl), müşterinin o araçtaki kiralama günü payıyla alınıp müşterinin kiralama gününe bölünür (müşteriye o yıl araç çalışmadıysa segmentteki filonun ortalaması). Filo veya araç adetleri değişirse başabaş tutarlar da değişir. Dosya ve gün sayıları bu müşterinin kendi filomuzla karşılanan dosyalarıdır; toplamlar simülatördeki Müşteri sekmesiyle aynıdır.</div>
+                            <div class="small text-muted mt-2">Gün başı maliyet, Tahminleme Simülatörü'ndeki mevcut filo ve doluluğa göre iki parçadan hesaplanır: <b>araç maliyeti</b> = segmentteki tüm araçların işletme gideri + (alış + faiz − satış) ÷ araç ömrü, segmentin toplam kiralama gününe bölünür (her müşteride aynı); <b>personel maliyeti</b> = dosya başı personel gideri ÷ müşterinin ortalama kiralama süresi (kısa kiralayan müşteride gün başına daha yüksek). Filo veya araç adetleri değişirse başabaş tutarlar da değişir. Dosya ve gün sayıları bu müşterinin kendi filomuzla karşılanan dosyalarıdır; toplamlar simülatördeki Müşteri sekmesiyle aynıdır.</div>
                         </template>
                     </div>
                 </div>
@@ -689,7 +689,7 @@
                         <div><label class="small text-muted">Marka Model</label><multi-select v-model="filters.vid" :options="filterOpts.vid" width="180px" :search="filterOpts.vid.length > 8"></multi-select></div>
                         <div><label class="small text-muted">Müşteri</label><multi-select v-model="filters.cust" :options="filterOpts.cust" width="200px" search :placeholder="hasCustomers ? 'Tümü' : 'Müşteri bilgisi yok'"></multi-select></div>
                         <div><button class="btn btn-sm btn-outline-secondary" :disabled="!filtersActive" @click="clearFilters"><i class="bi bi-funnel"></i> Filtreleri Temizle</button></div>
-                        <div class="small text-muted w-100 filter-help">Toplam {{ totalPlates }} araç plakası. Her filtrede birden çok seçim yapılabilir; boş bırakılan filtre "Tümü" demektir. Ay seçiliyken o aylarda teslim edilen dosyalar esas alınır; yıllık giderler ayların gün sayısına oranlanır ve araç satışı dahil edilmez. Müşteri seçiliyken gelir o müşterilerin dosyalarından, giderler ise araç başına müşterinin kiralama günü payıyla hesaplanır.</div>
+                        <div class="small text-muted w-100 filter-help">Toplam {{ totalPlates }} araç plakası. Her filtrede birden çok seçim yapılabilir; boş bırakılan filtre "Tümü" demektir. Ay seçiliyken o aylarda teslim edilen dosyalar esas alınır; yıllık giderler ayların gün sayısına oranlanır ve araç satışı dahil edilmez. Müşteri seçiliyken gelir o müşterilerin dosyalarından; araç gideri segmentteki kiralama günü payıyla, personel gideri dosya payıyla hesaplanır.</div>
                     </div></div>
 
                     <!-- Özet kartlar -->
@@ -780,7 +780,7 @@
                         <div v-if="detailTab === 'musteri'">
                             <div class="table-responsive" v-if="hasCustomers"><sort-table :key="'t-mus'" v-bind="detailTables.musteri"></sort-table></div>
                             <div class="p-4 text-center text-muted" v-else><i class="bi bi-people fs-3 d-block mb-2"></i>Henüz tarihçeye eklenen müşteri bilgisi yoktur. Tarihçe dosyanıza <b>Müşteri</b> sütunu ekleyip yeniden yükleyin.</div>
-                            <div class="p-2 small text-muted" v-if="hasCustomers">Gelir müşterinin dosyalarından, müşterinin kendi günlük tutarıyla hesaplanır. Araç ve personel gideri her araçta müşterinin kiralama günü payıyla dağıtılır. "Doluluğa Katkı": müşteriye çalışılan gün ÷ filodaki toplam araç günü; tüm müşterilerin toplamı filo doluluk oranıdır. Kârlılık = net ÷ gelir.</div>
+                            <div class="p-2 small text-muted" v-if="hasCustomers">Gelir müşterinin dosyalarından, müşterinin kendi günlük tutarıyla hesaplanır. Araç gideri (alış, faiz, işletme, satış) müşteriye segmentteki kiralama günü payıyla dağıtılır — segment ortalaması, dosyanın hangi araca düştüğünden bağımsız; personel gideri dosya payıyla dağıtılır (kısa kiralayan müşteri gün başına daha çok personel taşır). "Doluluğa Katkı": müşteriye çalışılan gün ÷ filodaki toplam araç günü; tüm müşterilerin toplamı filo doluluk oranıdır. Kârlılık = net ÷ gelir.</div>
                         </div>
                         <div class="table-responsive" v-if="detailTab === 'model'"><sort-table :key="'t-model'" v-bind="detailTables.model"></sort-table></div>
                         <div v-if="detailTab === 'gider'" class="row g-0">

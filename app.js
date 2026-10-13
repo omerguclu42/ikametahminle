@@ -402,42 +402,40 @@ const app = createApp({
             return out;
         },
         custMissingOwn() { return this.rateCustomers.filter(o => !this.custRateStatus[o.c].ok).map(o => custLabel(o.c)); },
-        /* Günlük Tutar fiyat analizi: seçili müşteri için segment × yıl bazında gün başı maliyet (başabaş), kâr ve forecast.
-           Gün başı maliyet (segment, yıl) = o yıl segmentteki araçların [işletme + personel payı + (alış + faiz − satış) ÷ ömür yılı] ÷ kiralama günü.
-           Gelir / gider: müşterinin kendi filomuzla karşılanan dosyalarının kiralama günü × (girilen tutar / gün başı maliyet). */
+        /* Günlük Tutar fiyat analizi: seçili müşteri için segment × yıl bazında gün başı maliyet (başabaş) ve kârlılık.
+           Karma maliyet yöntemi:
+           • Araç maliyeti (işletme + (alış + faiz − satış) ÷ ömür yılı): segmentteki tüm araçların toplamı ÷ segmentin toplam kiralama günü → segment ortalaması, her müşteride aynı.
+           • Personel maliyeti: filo genelinde dosya başına eşit (yıllık personel gideri ÷ dosya); gün başına = dosya başı personel ÷ müşterinin ortalama kiralama süresi.
+           Böylece hacim toplam gidere yansır; gün başı fark yalnızca kiralama süresinden gelir. */
         priceLab() {
             const R = this.report, c = this.gtCust, e = this.custEntry, info = this.gtInfo;
             if (c === null || !e || !info) return null;
-            const sc = R.scale || 1, years = R.years, fleet = {}, cust = {}; // cust: fiyat segmenti → yıl → { days, cost, op, pers, capex } (bu müşteriye düşen)
+            const sc = R.scale || 1, years = R.years, fleet = {}, cust = {}, pf = {}; // pf: yıl → { pers, files } (filo geneli)
             R.plates.forEach(p => {
                 const L = p.life.length; if (!L) return;
                 let capex = 0; p.life.forEach(y => { const b = p.byYear[y]; capex += b.buy + b.int - b.sale; });
                 let raw = 0; for (const k in p.price) raw += p.price[k];
-                const d = raw * sc, mine = [];
-                for (const k in p.price) { const [sg, cc] = E.splitKey(k); if (cc === c) mine.push([sg, p.price[k]]); }
+                const d = raw * sc;
                 p.life.forEach(y => {
-                    const b = p.byYear[y], S = fleet[p.seg] || (fleet[p.seg] = {}), o = S[y] || (S[y] = { cost: 0, days: 0, op: 0, pers: 0, capex: 0, plates: 0 });
-                    const cy = b.op + b.pers + capex / L;
-                    o.op += b.op; o.pers += b.pers; o.capex += capex / L; o.cost += cy; o.days += d; o.plates++;
-                    // müşterinin bu araçtaki kiralama günü payı kadar gider (simülatör Müşteri sekmesiyle aynı dağıtım)
-                    mine.forEach(([sg, dk]) => { const sh = raw ? dk / raw : 0, C = cust[sg] || (cust[sg] = {}), q = C[y] || (C[y] = { days: 0, cost: 0, op: 0, pers: 0, capex: 0, plates: 0 });
-                        q.days += dk * sc; q.cost += cy * sh; q.op += b.op * sh; q.pers += b.pers * sh; q.capex += capex / L * sh; q.plates++; });
+                    const b = p.byYear[y], S = fleet[p.seg] || (fleet[p.seg] = {}), o = S[y] || (S[y] = { cost: 0, days: 0, op: 0, capex: 0, plates: 0 });
+                    o.op += b.op; o.capex += capex / L; o.cost += b.op + capex / L; o.days += d; o.plates++;
+                    const q = pf[y] || (pf[y] = { pers: 0, files: 0 }); q.pers += b.pers; q.files += p.files;
+                    for (const k in p.price) { const [sg, cc] = E.splitKey(k); if (cc !== c) continue; const C = cust[sg] || (cust[sg] = {}); C[y] = (C[y] || 0) + p.price[k] * sc; }
                 });
             });
             const st = R.sim.segStats, avgAll = {};
             this.parsedFiles.forEach(f => { if (f.c !== c) return; const a = avgAll[f.seg] || (avgAll[f.seg] = { n: 0, d: 0 }); a.n++; a.d += E.rentDays(f.s, f.e); });
             const rateOf = (sg, y) => { const v = (e.gunluk[sg] || {})[y]; return v === null || v === undefined || v === '' ? null : Number(v); };
             const segs = SEGMENTS.filter(sg => info.segs[sg]);
-            /* Gün başı maliyet: bu müşterinin dosyalarına çalışan araçların maliyeti (müşteri günü payıyla) ÷ müşterinin kiralama günü.
-               Bu segment / yılda müşteriye hiç araç çalışmadıysa segmentteki filonun ortalaması kullanılır. */
             const cell = (sg, y) => {
-                const x = st[sg] && st[sg].c[c], a = avgAll[sg] || { n: 0, d: 0 }, o = fleet[sg] && fleet[sg][y], q = cust[sg] && cust[sg][y];
+                const x = st[sg] && st[sg].c[c], a = avgAll[sg] || { n: 0, d: 0 }, o = fleet[sg] && fleet[sg][y], q = pf[y];
                 const handled = x ? x.handled * sc : 0, avgDays = x && x.handled ? x.days / x.handled : (a.n ? a.d / a.n : 0);
-                const days = q ? q.days : 0, src = q && q.days > 0 ? q : (o && o.days > 0 ? o : null);
-                const rate = rateOf(sg, y), cd = src ? src.cost / src.days : null;
-                const r = { sg, y, rate, costDay: cd, avgDays, handled, days, hasFleet: cd !== null, plates: o ? o.plates : 0, own: !!(q && q.days > 0),
-                    src: src ? { cost: src.cost, op: src.op, pers: src.pers, capex: src.capex, days: src.days, plates: src.plates } : null, segDay: o && o.days > 0 ? o.cost / o.days : null,
-                    breakdown: src ? { op: src.op / src.days, pers: src.pers / src.days, capex: src.capex / src.days } : null };
+                const days = cust[sg] && cust[sg][y] ? cust[sg][y] : 0, rate = rateOf(sg, y);
+                const vehDay = o && o.days > 0 ? o.cost / o.days : null, ppf = q && q.files > 0 ? q.pers / q.files : 0, persDay = avgDays > 0 ? ppf / avgDays : 0;
+                const cd = vehDay === null ? null : vehDay + persDay;
+                const r = { sg, y, rate, costDay: cd, avgDays, handled, days, hasFleet: cd !== null, plates: o ? o.plates : 0, vehDay, persDay, ppf,
+                    fleet: o ? { op: o.op, capex: o.capex, cost: o.cost, days: o.days, plates: o.plates } : null, persFleet: q ? { pers: q.pers, files: q.files } : null,
+                    breakdown: vehDay === null ? null : { op: o.op / o.days, capex: o.capex / o.days, pers: persDay } };
                 if (rate !== null && cd !== null) {
                     r.profitDay = rate - cd; r.margin = rate ? r.profitDay / rate * 100 : 0; r.room = rate ? (rate - cd) / rate * 100 : 0;
                     r.fileRev = rate * avgDays; r.fileProfit = r.profitDay * avgDays; r.rev = days * rate; r.cost = days * cd; r.profit = days * r.profitDay;
@@ -461,18 +459,17 @@ const app = createApp({
             const S = this.selCell; if (!S) return {};
             const m = this.money, f = this.formatCurrency, d1 = this.fmt1, cl = this.gtCust || NO_CUST_LABEL, u = S.src, has = S.rate !== null && S.costDay !== null;
             const who = S.all ? `${cl} · tüm segment ve yıllar (kiralama günüyle ağırlıklı ortalama)` : `${cl} · ${S.sg} segmenti · ${S.y}`;
-            const why = 'Farklı müşterilerde farklı çıkabilir, çünkü her müşterinin maliyeti ona fiilen çalışan araçlardan gelir:\n' +
-                '• Personel gideri araçlara aldıkları DOSYA sayısı oranında dağıtılır; kiralama süresi kısa olan müşteri gün başına daha çok personel payı taşır.\n' +
-                '• Dosya, teslim anında boşta olan en düşük giderli araca verilir; müşterinin dosyaları hangi modellere / ne kadar dolu araçlara düştüyse onların maliyetini taşır.\n' +
-                '• Araç gideri o araçtaki kiralama günü payıyla dağıtılır; doluluğu düşük araca düşen müşteri gün başına daha çok gider taşır.';
+            const why = 'Müşteriler arasındaki fark yalnızca kiralama süresinden gelir: personel gideri dosya başına eşittir; kısa kiralayan müşteri gün başına daha çok personel payı taşır. Araç maliyeti segmentteki tüm müşteriler için aynıdır (dosyanın hangi araca düştüğü sonucu değiştirmez). Hacim toplam gidere yansır: gider = kiralama günü × gün başı maliyet.';
+            const fl = S.fleet, pfl = S.persFleet;
             return {
                 rate: S.all ? `${who}\nGirilen günlük tutarların, her segment / yıldaki kiralama günüyle ağırlıklı ortalaması:\nΣ (gün × tutar) ÷ Σ gün = ${S.rate === null ? '-' : m(S.rev) + ' ÷ ' + f(S.days) + ' = ' + m(S.rate)}` + (S.missing ? `\nTutar girilmemiş ${S.missing} segment / yıl ortalamaya katılmadı.` : '')
                     : `${who}\nBu hücreye girdiğiniz Eurocross Turkey günlük tutarı (müşteriye bir kiralama günü için yansıtılan).\nDosya geliri = kiralama günü (tam gün) × bu tutar.`,
-                cost: !u ? `${who}\nBu segment / yılda filoda aktif araç olmadığı için maliyet hesaplanamıyor.` :
-                    `${who}\nBir kiralama gününün bize maliyeti; günlük tutar bunun altındaysa zarar edilir.\n` +
-                    (S.all ? `Tüm segment ve yılların gün başı maliyetlerinin kiralama günüyle ağırlıklı ortalaması:` : S.own ? `Bu müşterinin dosyalarına çalışan ${f(u.plates)} aracın, müşterinin o araçlardaki kiralama günü payı kadar gideri:` : `Bu müşteriye bu segment / yılda araç çalışmadı; segmentteki ${f(u.plates || S.plates)} aracın ortalaması kullanıldı:`) +
-                    `\n  İşletme ${m(u.op)} + personel ${m(u.pers)} + (alış + faiz − satış) ÷ ömür ${m(u.capex)} = ${m(u.cost)}\n  ÷ ${f(u.days)} kiralama günü = ${m(S.costDay)}` +
-                    (S.segDay !== null && S.own ? `\nKarşılaştırma: segmentteki tüm filonun ortalaması ${m(S.segDay)}.` : '') + '\n\n' + why,
+                cost: S.costDay === null ? `${who}\nBu segment / yılda filoda aktif araç olmadığı için maliyet hesaplanamıyor.` :
+                    `${who}\nBir kiralama gününün bize maliyeti; günlük tutar bunun altındaysa zarar edilir.\nGün başı maliyet = araç maliyeti + personel maliyeti = ${m(S.vehDay)} + ${m(S.persDay)} = ${m(S.costDay)}\n\n` +
+                    (S.all ? `Tüm segment ve yılların kiralama günüyle ağırlıklı ortalamasıdır.` :
+                        `1) Araç maliyeti (segment ortalaması, tüm müşterilerde aynı):\n  ${S.sg} segmentindeki ${f(fl.plates)} aracın ${S.y} gideri: işletme ${m(fl.op)} + (alış + faiz − satış) ÷ ömür ${m(fl.capex)} = ${m(fl.cost)}\n  ÷ segmentin ${f(fl.days)} kiralama günü = ${m(S.vehDay)}\n` +
+                        `2) Personel maliyeti (bu müşteriye özel):\n  ${S.y} personel gideri ${m(pfl ? pfl.pers : 0)} ÷ ${f(pfl ? pfl.files : 0)} dosya = dosya başı ${m(S.ppf)}\n  ÷ müşterinin ortalama kiralama süresi ${d1(S.avgDays)} gün = ${m(S.persDay)}`) +
+                    '\n\n' + why,
                 profit: has ? `${who}\nGünlük kâr = günlük tutar − gün başı maliyet\n${m(S.rate)} − ${m(S.costDay)} = ${m(S.profitDay)}\nKâr marjı = günlük kâr ÷ günlük tutar = ${this.pct(S.margin)}` : 'Günlük tutar girildiğinde: günlük tutar − gün başı maliyet.',
                 room: has ? `${who}\n` + (S.profitDay >= 0 ? `Tutar en fazla bu oranda düşürülürse hâlâ zarar edilmez:\n(günlük tutar − başabaş) ÷ günlük tutar = (${m(S.rate)} − ${m(S.costDay)}) ÷ ${m(S.rate)} = %${d1(S.room)}` : `Zarardan çıkmak için tutarın bu oranda artırılması gerekir:\nbaşabaş ÷ günlük tutar − 1 = ${m(S.costDay)} ÷ ${m(S.rate)} − 1 = %${d1((S.costDay / S.rate - 1) * 100)}`) : 'Günlük tutar girildiğinde: başabaş tutara göre indirim payı ya da gereken zam.',
                 avg: `${who}\nBu müşterinin ${S.all ? 'tüm' : S.sg + ' segmentindeki'} ${S.handled ? 'kendi filomuzla karşılanan' : ''} dosyalarının ortalama kiralama günü (24 saat + 3 saati aşan kalan 1 gün kuralıyla).\n${d1(S.avgDays)} gün`,
@@ -481,7 +478,7 @@ const app = createApp({
                 fileProfit: has ? `${who}\nDosya başı kâr = dosya başı gelir − dosya başı gider\n${m(S.fileRev)} − ${m(S.costDay * S.avgDays)} = ${m(S.fileProfit)}` : 'Günlük tutar girildiğinde: dosya başı gelir − dosya başı gider.',
                 year: `${who}\nBu müşterinin ${S.all ? 'tüm yıllardaki' : S.sg} dosyalarından kendi filomuzla karşılananlar (simülatördeki filoya göre):\n${f(S.handled)} dosya, ${f(S.days)} kiralama günü\nGelir = gün × günlük tutar${has ? ' = ' + m(S.rev) : ''}\nGider = gün × gün başı maliyet${S.costDay !== null ? ' = ' + m(S.days * S.costDay) : ''}\nNet = gelir − gider${has ? ' = ' + m(S.profit) : ''}`,
                 scen: `${S.all ? 'Tüm segment ve yıllardaki tutarlar aynı oranda' : 'Seçili hücrede günlük tutar'} değişirse (maliyet aynı kalır):\nGünlük kâr = tutar − gün başı maliyet\nDosya başı kâr = günlük kâr × ortalama kiralama süresi (${d1(S.avgDays)} gün)\n${S.all ? 'Toplam net (tüm yıllar)' : 'Yıllık net'} = günlük kâr × ${S.all ? 'toplam' : 'bu müşterinin ' + S.y + ' yılı ' + S.sg} kiralama günü (${f(S.days)})\nİlk satır başabaş tutardır (kâr 0).`,
-                forecast: `${cl} için ay ay nakit akışı (paranın gerçekten girip çıktığı ay):\n• Dosya geliri: dosyanın teslimat ayına, kiralama günü × o segment / yılın günlük tutarı.\n• Araç alışı: peşin araçta tutarın tamamı ilk yılın Ocak ayında; kredili araçta her ay taksit (anapara + faiz), kalan anapara araç satılırken kapanır.\n• İşletme ve personel gideri: yıllık tutarın 12'de biri her ay.\n• Araç satışı: aracın ömrünün son ayında (Aralık) gelir.\nHer kalemin bu müşteriye düşen kısmı, müşterinin araçtaki kiralama günü payıdır.\nKümülatif nakdin ilk kez sıfırın üzerine çıktığı ay "kâra geçiş" (yatırımın geri dönüşü); en düşük kümülatif değer en yüksek finansman ihtiyacıdır.\nToplamlar simülatördeki Müşteri sekmesiyle aynıdır.`,
+                forecast: `${cl} için ay ay nakit akışı (paranın gerçekten girip çıktığı ay):\n• Dosya geliri: dosyanın teslimat ayına, kiralama günü × o segment / yılın günlük tutarı.\n• Araç alışı: peşin araçta tutarın tamamı ilk yılın Ocak ayında; kredili araçta her ay taksit (anapara + faiz), kalan anapara araç satılırken kapanır.\n• İşletme ve personel gideri: yıllık tutarın 12'de biri her ay.\n• Araç satışı: aracın ömrünün son ayında (Aralık) gelir.\nMüşteriye düşen kısım: araç kalemlerinde (alış, faiz, işletme, satış) müşterinin segmentteki kiralama günü payı; personelde araçlardaki dosya payı.\nKümülatif nakdin ilk kez sıfırın üzerine çıktığı ay "kâra geçiş" (yatırımın geri dönüşü); en düşük kümülatif değer en yüksek finansman ihtiyacıdır.\nToplamlar simülatördeki Müşteri sekmesiyle aynıdır.`,
                 grid: `Her hücre: girilen günlük tutar / başabaş tutar (gün başı maliyet) ve gün başı kâr.\nYeşil: tutar başabaşın üzerinde (kâr), kırmızı: altında (zarar).\n"Filoda araç yok": simülatörde bu segmentten o yıl aktif araç yok.\nHücreye tıklayınca yukarıdaki analiz o hücreye geçer.`
             };
         },
@@ -493,17 +490,21 @@ const app = createApp({
             const rows = years.map(y => MONTHS.map((m, mi) => ({ y, mi, files: 0, days: 0, rev: 0, sale: 0, capex: 0, op: 0, pers: 0 })));
             const yi = {}; years.forEach((y, i) => { yi[y] = i; });
             let any = false;
+            const AF = this.custAlloc.full, PF = this.plateFull;
             R.plates.forEach(p => {
-                let raw = 0, mine = 0; for (const k in p.price) { raw += p.price[k]; if (E.splitKey(k)[1] === c) mine += p.price[k]; }
-                if (!raw || !mine || !p.life.length) return;
+                if (!p.life.length) return;
+                // Araç kalemleri: segmentte müşterinin kiralama günü payı (segment ortalaması); personel: araçtaki dosya payı
+                const segT = AF.segTot[p.seg] || 0, fv = segT ? ((AF.segC[p.seg] || {})[c] || 0) / segT : 0;
+                const pcF = PF.get(p.id); let ft = 0; for (const k in pcF.cf) ft += pcF.cf[k]; const fp = ft ? (pcF.cf[c] || 0) / ft : 0;
+                if (!fv && !fp && !pcF.cd[c]) return;
                 any = true;
-                const sh = mine / raw, ct = R.vehicleCosts[p.vid], v = vmap[p.vid] || {}, life = p.life, L = life.length;
+                const sh = fv, ct = R.vehicleCosts[p.vid], v = vmap[p.vid] || {}, life = p.life, L = life.length;
                 const at = (y, mi) => (yi[y] === undefined ? null : rows[yi[y]][mi]);
                 life.forEach(y => {
                     const b = p.byYear[y];
                     for (let mi = 0; mi < 12; mi++) {
                         const r = at(y, mi); if (!r) continue;
-                        r.op += b.op / 12 * sh; r.pers += b.pers / 12 * sh;
+                        r.op += b.op / 12 * fv; r.pers += b.pers / 12 * fp;
                         const pr = p.mPrice[mi]; for (const k in pr) { const [sg, cc] = E.splitKey(k); if (cc !== c) continue; r.days += pr[k] * sc; r.rev += pr[k] * sc * RT.rate(c, sg, y); }
                         r.files += ((p.mCf[mi] || {})[c] || 0) * sc;
                     }
@@ -546,11 +547,11 @@ const app = createApp({
                 t.days += g.days; t.handled += g.handled;
                 if (g.rate !== null) { t.rev += g.days * g.rate; t.rateDays += g.days; } else t.missing++;
                 if (g.costDay !== null) { t.cost += g.days * g.costDay; t.costDays += g.days; if (g.breakdown) { t.op += g.breakdown.op * g.days; t.pers += g.breakdown.pers * g.days; t.capex += g.breakdown.capex * g.days; } }
-                t.plates = Math.max(t.plates, g.src ? g.src.plates : 0);
+                t.plates = Math.max(t.plates, g.plates || 0);
             }));
             const r = { all: true, sg: null, y: null, days: t.days, handled: t.handled, avgDays: t.handled ? t.days / t.handled : 0, missing: t.missing,
-                rate: t.rateDays ? t.rev / t.days : null, costDay: t.costDays ? t.cost / t.costDays : null, hasFleet: t.costDays > 0, plates: t.plates, own: true,
-                src: t.costDays ? { cost: t.cost, op: t.op, pers: t.pers, capex: t.capex, days: t.costDays, plates: t.plates } : null, segDay: null,
+                rate: t.rateDays ? t.rev / t.days : null, costDay: t.costDays ? t.cost / t.costDays : null, hasFleet: t.costDays > 0, plates: t.plates,
+                vehDay: t.costDays ? (t.op + t.capex) / t.costDays : null, persDay: t.costDays ? t.pers / t.costDays : 0,
                 breakdown: t.costDays ? { op: t.op / t.costDays, pers: t.pers / t.costDays, capex: t.capex / t.costDays } : null };
             if (r.rate !== null && r.costDay !== null) {
                 r.profitDay = r.rate - r.costDay; r.margin = r.rate ? r.profitDay / r.rate * 100 : 0; r.room = r.margin;
@@ -682,6 +683,25 @@ const app = createApp({
             });
             return out;
         },
+        /* Ay filtresinden bağımsız (tüm yıl) plaka müşteri kırılımı */
+        plateFull() {
+            if (!this.msel) return this.plateCust;
+            const R = this.report, out = new Map();
+            R.plates.forEach(p => {
+                const keys = {}, cf = {}, cd = {}; let tot = 0;
+                for (const k in p.price) { const d = p.price[k], c = E.splitKey(k)[1]; keys[k] = d; cd[c] = (cd[c] || 0) + d; tot += d; }
+                p.mCf.forEach(o => { for (const c in o) cf[c] = (cf[c] || 0) + o[c]; });
+                out.set(p.id, { keys, cf, cd, tot });
+            });
+            return out;
+        },
+        /* Karma gider dağıtımı için segment toplamları: araç segmenti → toplam kiralama günü ve müşteri günleri.
+           Araç kalemleri (işletme, alış, faiz, satış) müşteriye segmentteki kiralama günü payıyla dağıtılır (segment ortalaması);
+           personel gideri araçtaki dosya payıyla. ms: seçili aylar, full: tüm yıl. */
+        custAlloc() {
+            const R = this.report, build = M => { const segTot = {}, segC = {}; R.plates.forEach(p => { const pc = M.get(p.id); segTot[p.seg] = (segTot[p.seg] || 0) + pc.tot; const o = segC[p.seg] || (segC[p.seg] = {}); for (const c in pc.cd) o[c] = (o[c] || 0) + pc.cd[c]; }); return { segTot, segC }; };
+            const ms = build(this.plateCust); return { ms, full: this.msel ? build(this.plateFull) : ms };
+        },
         /* Müşteri filtresi seçiliyken: o müşterilerin talebiyle segment bazında gereken araç (tek başına) */
         custCurve() {
             const X = this.fctx; if (!X.cs) return null;
@@ -704,8 +724,11 @@ const app = createApp({
             const add = (a, r) => { a.work += r.work; a.idle += r.idle; a.revenue += r.revenue; a.sale += r.sale; a.op += r.op; a.buy += r.buy; a.int += r.int; a.cost += r.cost; a.pers += r.pers; a.net += r.net; a.files += r.f; };
             const sumC = o => { let x = 0; for (const c in o) if (cs.has(c)) x += o[c]; return x; };
             const shareOf = p => { const pc = PC.get(p.id); return pc.tot ? sumC(pc.cd) / pc.tot : 0; };
+            const AL = this.custAlloc.ms, AF = this.custAlloc.full, PF = this.plateFull;
+            const vsh = (p, A) => this.vShare(p, cs, A), fsh = pc => this.fShare(pc, cs);
             /* Plakanın bir yıldaki sonucu. Ay seçiliyse seçili aylarda teslim edilen dosyaların çalışma günü ve geliri; yıllık giderler gün sayısına oranlanır, satış hariç.
-               Müşteri seçiliyse gelir yalnızca o müşterilerin dosyalarından; giderler, çalışılan ve boşta gün o müşterilerin plakadaki kiralama günü payıyla dağıtılır. */
+               Müşteri seçiliyse gelir yalnızca o müşterilerin dosyalarından; araç gideri ve satış segmentteki kiralama günü payıyla (segment ortalaması),
+               personel gideri araçtaki dosya payıyla; çalışılan / boşta gün araçtaki kiralama günü payıyla dağıtılır. */
             const rec = (p, y) => {
                 const r = p.byYear[y]; let o;
                 if (!ms) o = { work: r.work, idle: r.idle, revenue: r.revenue, sale: r.sale, op: r.op, buy: r.buy, int: r.int, pers: r.pers, f: p.files };
@@ -715,8 +738,8 @@ const app = createApp({
                     o = { work, idle, revenue, sale: 0, op: r.op * mf, buy: r.buy * mf, int: r.int * mf, pers: r.pers * mf, f };
                 }
                 if (cs) {
-                    const pc = PC.get(p.id), sh = pc.tot ? sumC(pc.cd) / pc.tot : 0;
-                    ['work', 'idle', 'sale', 'op', 'buy', 'int', 'pers'].forEach(k => { o[k] *= sh; });
+                    const pc = PC.get(p.id), sh = pc.tot ? sumC(pc.cd) / pc.tot : 0, fv = vsh(p, AL), fp = fsh(pc);
+                    o.work *= sh; o.idle *= sh; ['sale', 'op', 'buy', 'int'].forEach(k => { o[k] *= fv; }); o.pers *= fp;
                     let rev = 0; for (const k in pc.keys) { const [sg, c] = E.splitKey(k); if (cs.has(c)) rev += pc.keys[k] * sc * RT.rate(c, sg, y); }
                     o.revenue = rev; o.f = sumC(pc.cf) * sc;
                 }
@@ -728,15 +751,16 @@ const app = createApp({
                 const r = p.byYear[y]; if (!cs) return { ...r, f: p.files };
                 let a = 0, t = 0, rev = 0;
                 for (const k in p.price) { const d = p.price[k], [sg, c] = E.splitKey(k); t += d; if (cs.has(c)) { a += d; rev += d * sc * RT.rate(c, sg, y); } }
-                const sh = t ? a / t : 0, o = { work: r.work * sh, idle: r.idle * sh, revenue: rev, sale: r.sale * sh, op: r.op * sh, buy: r.buy * sh, int: r.int * sh, pers: r.pers * sh, f: 0 };
+                const sh = t ? a / t : 0, fv = vsh(p, AF), fp = fsh(PF.get(p.id));
+                const o = { work: r.work * sh, idle: r.idle * sh, revenue: rev, sale: r.sale * fv, op: r.op * fv, buy: r.buy * fv, int: r.int * fv, pers: r.pers * fp, f: 0 };
                 o.cost = o.op + o.buy + o.int; o.net = o.revenue + o.sale - o.cost - o.pers; return o;
             };
             const total = z(), yearAgg = {}, yearFull = {}, segAgg = {}, modelAgg = {}, items = {}, cats = {}, plateRows = [], monthWork = Array(12).fill(0), monthCap = Array(12).fill(0);
             R.years.forEach(y => { yearAgg[y] = z(); yearFull[y] = z(); });
             R.plates.forEach(p => {
                 if (!X.segOk(p)) return;
-                const ct = R.vehicleCosts[p.vid], sh = cs ? shareOf(p) : 1;
-                if (cs && !sh) return;
+                const ct = R.vehicleCosts[p.vid], sh = cs ? shareOf(p) : 1, fvP = cs ? vsh(p, AL) : 1, fpP = cs ? fsh(PC.get(p.id)) : 1;
+                if (cs && !sh && !fvP && !fpP) return;
                 const pc = PC.get(p.id), files1 = cs ? sumC(pc.cf) * sc : (ms ? ms.reduce((a, i) => a + p.months[i].files, 0) : p.files);
                 const row = { p, files1, ...z() };
                 p.months.forEach((m, i) => {
@@ -757,9 +781,9 @@ const app = createApp({
                         it.tutar += tutar;
                         const ck = grup + '|' + kategori; cats[ck] = cats[ck] || { grup, kategori, tutar: 0 }; cats[ck].tutar += tutar;
                     };
-                    ct.rows.forEach(x => put('Araç', x.kalem, x.kategori, x.vals[y] * mf * sh));
+                    ct.rows.forEach(x => put('Araç', x.kalem, x.kategori, x.vals[y] * mf * fvP));
                     const ps = p.byYear[y].persShare;
-                    if (ps) R.pers.rows.forEach(x => put('Personel', x.kalem, x.kategori, x.vals[y] * ps * mf * sh));
+                    if (ps) R.pers.rows.forEach(x => put('Personel', x.kalem, x.kategori, x.vals[y] * ps * mf * fpP));
                 });
                 if (row.plates) { row.util = row.work + row.idle ? row.work / (row.work + row.idle) * 100 : 0; plateRows.push(row); }
             });
@@ -849,10 +873,11 @@ const app = createApp({
                 itemTotal: itemRows.reduce((sum, r) => sum + r.tutar, 0)
             };
         },
-        /* Müşteri bazında sonuçlar: talep / karşılama segment istatistiklerinden; gelir müşterinin dosyalarından (kendi tutarıyla);
-           araç ve personel gideri, satış ve çalışılan gün her plakada müşterinin kiralama günü payıyla dağıtılır. */
+        /* Müşteri bazında sonuçlar: talep / karşılama segment istatistiklerinden; gelir müşterinin dosyalarından (kendi tutarıyla).
+           Karma gider dağıtımı: araç gideri ve satış, segmentteki kiralama günü payıyla (segment ortalaması — dosyanın hangi araca düştüğünden bağımsız);
+           personel gideri araçtaki dosya payıyla (kısa kiralayan müşteri gün başına daha çok personel taşır); çalışılan gün araçtaki gün payıyla. */
         custView() {
-            const R = this.report, X = this.fctx, V = this.view, sc = R.scale || 1, RT = R.rates, PC = this.plateCust, ms = X.ms;
+            const R = this.report, X = this.fctx, V = this.view, sc = R.scale || 1, RT = R.rates, PC = this.plateCust, ms = X.ms, AL = this.custAlloc.ms;
             const list = this.customerList.filter(c => X.cOk(c));
             if (!this.hasCustomers) return { rows: [], tot: null, capTotal: 0 };
             const z = c => ({ c, label: c || NO_CUST_LABEL, total: 0, handled: 0, own: 0, up: 0, down: 0, days: 0, work: 0, revenue: 0, sale: 0, cost: 0, pers: 0, files: 0 });
@@ -870,8 +895,11 @@ const app = createApp({
                     if (!ms) { work = b.work; idle = b.idle; sale = b.sale; cost = b.cost; pers = b.pers; }
                     else { work = 0; idle = 0; ms.forEach(i => { const dim = X.dimOf(i), ow = Math.min(dim, Math.round(p.months[i].occ)); work += ow; idle += Math.max(0, dim - ow); }); sale = 0; cost = b.cost * X.mf; pers = b.pers * X.mf; }
                     capTotal += work + idle;
-                    if (!pc.tot) return;
-                    for (const c in pc.cd) { const a = A.get(c); if (!a) continue; const sh = pc.cd[c] / pc.tot; a.work += work * sh; a.sale += sale * sh; a.cost += cost * sh; a.pers += pers * sh; }
+                    if (pc.tot) for (const c in pc.cd) { const a = A.get(c); if (a) a.work += work * pc.cd[c] / pc.tot; }
+                    const segT = AL.segTot[p.seg] || 0, segC = AL.segC[p.seg] || {};
+                    if (segT) for (const c in segC) { const a = A.get(c); if (!a) continue; const f = segC[c] / segT; a.cost += cost * f; a.sale += sale * f; }
+                    let ft = 0; for (const c in pc.cf) ft += pc.cf[c];
+                    if (ft) for (const c in pc.cf) { const a = A.get(c); if (a) a.pers += pers * pc.cf[c] / ft; }
                     for (const k in pc.keys) { const [sg, c] = E.splitKey(k), a = A.get(c); if (a) a.revenue += pc.keys[k] * sc * RT.rate(c, sg, y); }
                 });
                 for (const c in pc.cf) { const a = A.get(c); if (a) a.files += pc.cf[c] * sc; }
@@ -945,7 +973,7 @@ const app = createApp({
         },
         /* Ay bazlı performans (teslim ayına göre) */
         monthDetail() {
-            const R = this.report, X = this.fctx, V = this.view, st = R.sim.segStats, sc = R.scale || 1, RT = R.rates;
+            const R = this.report, X = this.fctx, V = this.view, st = R.sim.segStats, sc = R.scale || 1, RT = R.rates, AL = this.custAlloc.ms, PC = this.plateCust;
             const yrs = R.years.filter(X.yOk), nY = yrs.length || 1;
             const rows = []; let cum = 0; const tot = { total: 0, handled: 0, cross: 0, missed: 0, work: 0, cap: 0, revenue: 0, cost: 0, net: 0 };
             for (let mi = 0; mi < 12; mi++) {
@@ -955,11 +983,12 @@ const app = createApp({
                 let work = 0, cap = 0, revenue = 0, cost = 0;
                 R.plates.forEach(p => {
                     if (!X.segOk(p)) return;
-                    const k = X.cs ? this.dayShare(p.mPrice[mi], X.cs) : 1; if (!k) return;
+                    const k = X.cs ? this.dayShare(p.mPrice[mi], X.cs) : 1, fv = X.cs ? this.vShare(p, X.cs, AL) : 1, fp = X.cs ? this.fShare(PC.get(p.id), X.cs) : 1;
+                    if (!k && !fv && !fp) return;
                     p.life.forEach(y => {
                         if (!X.yOk(y)) return;
                         const b = p.byYear[y];
-                        work += Math.min(p.months[mi].occ, dim) * k; cap += dim * k; cost += (b.cost + b.pers) * dim / 365 * k;
+                        work += Math.min(p.months[mi].occ, dim) * k; cap += dim * k; cost += (b.cost * fv + b.pers * fp) * dim / 365;
                         if (!X.cs) revenue += b.mRev[mi];
                         else { const pr = p.mPrice[mi]; for (const key in pr) { const [sg, c] = E.splitKey(key); if (X.cs.has(c)) revenue += pr[key] * sc * RT.rate(c, sg, y); } }
                     });
@@ -1096,7 +1125,7 @@ const app = createApp({
             const fs = V.files, k = V.cmp || {}, gider = t.cost + t.pers;
             return {
                 'Araç Satış Geliri': `Optimum satış yılını dolduran araçların satış tutarı, satış yılında gelir yazılır.\nAraç ömrü tanımlı yıllardan uzunsa satış hesaba katılmaz. Ay filtresi seçiliyken dahil edilmez.\nToplam: ${m(t.sale)}`,
-                'Dosya Geliri': `Her dosya için: kiralama günü × günlük tutar.\nKiralama günü tam gündür (24 saat + 3 saati aşan kalan 1 gün). Yıl sonuna sarkan dosya (ör. 25 Aralık teslim, 2 Ocak iade = 8 gün) tamamen başladığı yılın tutarıyla ve teslimat ayına gelir yazılır.\nGünlük tutar, Günlük Tutar sayfasında dosyanın müşterisi için girilen Eurocross Turkey günlük tutarıdır; girilmemişse gelir 0 hesaplanır.\nMüşteri filtresi seçiliyken yalnızca o müşterilerin dosyalarının geliri; giderler araç başına müşterinin kiralama günü payıyla dağıtılır.\nÜst segment verilen dosya talep edilen segmentin, alt segment verilen dosya verilen segmentin tutarıyla fiyatlanır.\nGün sayımı: tam 24 saatler + 3 saatten fazla artan süre 1 gün.\nToplam: ${f(t.work)} gün → ${m(t.revenue)}`,
+                'Dosya Geliri': `Her dosya için: kiralama günü × günlük tutar.\nKiralama günü tam gündür (24 saat + 3 saati aşan kalan 1 gün). Yıl sonuna sarkan dosya (ör. 25 Aralık teslim, 2 Ocak iade = 8 gün) tamamen başladığı yılın tutarıyla ve teslimat ayına gelir yazılır.\nGünlük tutar, Günlük Tutar sayfasında dosyanın müşterisi için girilen Eurocross Turkey günlük tutarıdır; girilmemişse gelir 0 hesaplanır.\nMüşteri filtresi seçiliyken yalnızca o müşterilerin dosyalarının geliri; araç gideri segmentteki kiralama günü payıyla, personel gideri dosya payıyla dağıtılır.\nÜst segment verilen dosya talep edilen segmentin, alt segment verilen dosya verilen segmentin tutarıyla fiyatlanır.\nGün sayımı: tam 24 saatler + 3 saatten fazla artan süre 1 gün.\nToplam: ${f(t.work)} gün → ${m(t.revenue)}`,
                 'Araç İşletme Gideri': `Araç gider başlıklarının yıllık tutarları × araç adedi.\nYıllık tutar: baz yıl girilen tutar, sonraki yıllar enflasyonla artar. Km bazlı (bakım), ömür boyu adet (lastik), yılda adet (temizlik), tek seferlik ve yakıt km başlıkları kendi kurallarıyla hesaplanır. Araç başı detay: araç kartında "İncele".\nToplam: ${m(t.op)}`,
                 'Alış Gideri': `Araç alış bedelinin anapara kısmı.\nPeşin: tamamı ilk kullanım yılına. Kredili: her yıl ödenen taksitlerin anapara kısmı; kredi araç ömründen uzunsa kalan anapara satış yılında kapatılır.\nToplam: ${m(t.buy)}`,
                 'Faiz Gideri': `Kredili araçların taksitlerindeki faiz kısmı (eşit taksit; aylık faiz = yıllık faiz ÷ 12). Taksit ödendiği yıla yazılır.\nToplam: ${m(t.int)}`,
@@ -1425,6 +1454,10 @@ const app = createApp({
             });
             return o;
         },
+        /* Karma dağıtım: seçili müşterilerin, plakanın segmentindeki kiralama günü payı (araç kalemleri için) */
+        vShare(p, cs, A) { const t = A.segTot[p.seg]; if (!t) return 0; const o = A.segC[p.seg] || {}; let x = 0; for (const c in o) if (cs.has(c)) x += o[c]; return x / t; },
+        /* Karma dağıtım: seçili müşterilerin plakadaki dosya payı (personel gideri için) */
+        fShare(pc, cs) { let a = 0, t = 0; for (const c in pc.cf) { t += pc.cf[c]; if (cs.has(c)) a += pc.cf[c]; } return t ? a / t : 0; },
         /* Bir fiyat tablosunda (segment+müşteri → gün) seçili müşterilerin gün payı */
         dayShare(pr, cs) { let a = 0, t = 0; for (const k in pr) { const d = pr[k]; t += d; if (cs.has(E.splitKey(k)[1])) a += d; } return t ? a / t : 0; },
         /* Personel sayısı kilidi: açıkken önerilen sayıdan otomatik; elle değiştirince kilitlenir */
@@ -1987,7 +2020,7 @@ const app = createApp({
             // Gelir, gider, net
             const best = rows.reduce((a, r) => (r.net > a.net ? r : a), rows[0]), worst = rows.reduce((a, r) => (r.net < a.net ? r : a), rows[0]);
             const fcols = ['Müşteri', 'Dosya', 'Gelir', 'Gider', 'Net', 'Kârlılık']; if (sup) fcols.push('Şirket Neti');
-            B.push({ id: 'chCustFin', title: 'Müşteri Bazında Gelir, Gider ve Net', sub: 'Her müşterinin dosyalarından elde edilen gelir (müşterinin kendi günlük tutarıyla), ona düşen araç + personel gideri ve net sonuç. Giderler her araçta müşterinin kiralama günü payıyla dağıtılır.' + lim,
+            B.push({ id: 'chCustFin', title: 'Müşteri Bazında Gelir, Gider ve Net', sub: 'Her müşterinin dosyalarından elde edilen gelir (müşterinin kendi günlük tutarıyla), ona düşen araç + personel gideri ve net sonuç. Araç gideri segmentteki kiralama günü payıyla (segment ortalaması), personel gideri dosya sayısı payıyla dağıtılır.' + lim,
                 insight: `En çok gelir ${rows[0].label} müşterisinden (${sm(rows[0].gelir)}). En kârlı ${best.label} (net ${sm(best.net)})` + (worst.net < 0 ? `, en çok zarar ettiren ${worst.label} (${sm(worst.net)}).` : '.'),
                 cols: fcols, rows: rows.map(r => { const x = [c(r.label, 'text-start fw-bold'), c(f(r.total)), c(sm(r.gelir), 'text-success'), c(sm(r.gider), 'text-danger'), c(sm(r.net), 'fw-bold ' + nc(r.net)), c(pc(r.margin), nc(r.margin))]; if (sup) x.push(c(sm(r.company), nc(r.company))); return x; }),
                 foot: [c('Toplam', 'text-start'), c(f(T.total)), c(sm(T.gelir)), c(sm(T.gider)), c(sm(T.net), nc(T.net)), c(pc(T.margin)), ...(sup ? [c(sm(T.company))] : [])] });
@@ -2008,7 +2041,7 @@ const app = createApp({
                 foot: [c('Toplam', 'text-start'), c('%100'), c('%100'), c(T.net ? (T.net < 0 ? '-%100' : '%100') : '-'), c(pc(T.contrib))] });
             // Birim ekonomi
             const wk = rows.filter(r => r.work > 0), bestU = wk.length ? wk.reduce((a, r) => (r.revDay - r.costDay > a.revDay - a.costDay ? r : a), wk[0]) : null;
-            B.push({ id: 'chCustUnit', title: 'Müşteri Birim Ekonomisi', sub: 'Müşteriye çalışılan gün başına ortalama gelir (müşterinin günlük tutarı) ve maliyet (araç + personel gideri − satış payı). Kâr / gün negatifse o müşteriye kendi aracımızla hizmet vermek zarar ettiriyor.' + lim,
+            B.push({ id: 'chCustUnit', title: 'Müşteri Birim Ekonomisi', sub: 'Müşteriye çalışılan gün başına ortalama gelir (müşterinin günlük tutarı) ve maliyet (araç + personel gideri − satış payı). Araç maliyeti segmentte herkese aynı; personel maliyeti dosya başına olduğundan kısa kiralayan müşteride gün başına daha yüksek. Kâr / gün negatifse o müşteriye kendi aracımızla hizmet vermek zarar ettiriyor.' + lim,
                 insight: bestU ? `Gün başı en kârlı müşteri ${bestU.label}: ${money(bestU.revDay - bestU.costDay)} (gelir ${money(bestU.revDay)}, maliyet ${money(bestU.costDay)}).` : '',
                 cols: ['Müşteri', 'Ort. Kiralama', 'Gelir / gün', 'Maliyet / gün', 'Kâr / gün', 'Net / dosya'],
                 rows: rows.map(r => [c(r.label, 'text-start fw-bold'), c(this.fmt1(r.avgRental) + ' gün'), c(r.work ? money(r.revDay) : '-', 'text-success'), c(r.work ? money(r.costDay) : '-', 'text-danger'), c(r.work ? money(r.revDay - r.costDay) : '-', nc(r.revDay - r.costDay)), c(r.handled ? money(r.netFile) : '-', nc(r.netFile))]) });
