@@ -81,6 +81,14 @@
                     </a>
                 </li>
             </ul>
+            <div class="cur-box">
+                <div class="cur-label">Para Birimi</div>
+                <div class="cur-switch">
+                    <button type="button" :class="{on: cur === 'TRY'}" @click="setCur('TRY')" title="Türk Lirası">₺ TL</button>
+                    <button type="button" :class="{on: cur === 'EUR', off: !fx.ok}" @click="setCur('EUR')" :title="fx.ok ? 'Euro (Döviz Kuru sayfasındaki aylık kurlarla)' : 'Önce Döviz Kuru sayfasından kur girin'">€ EUR</button>
+                </div>
+                <div class="cur-note" v-if="cur === 'EUR'">{{ fx.ok ? 'Sonuç ekranları €, giriş sayfaları ₺' : 'Kur eksik: ' + fx.missingYears.join(', ') }}</div>
+            </div>
             <div class="sidebar-user" v-if="auth.user">
                 <div class="small text-truncate" :title="auth.user.email"><i class="bi bi-person-circle me-1"></i>{{ auth.user.email }}</div>
                 <a href="#" class="logout-link mt-1 d-inline-block" @click.prevent="logout"><i class="bi bi-box-arrow-right me-1"></i>Çıkış Yap</a>
@@ -104,6 +112,11 @@
             <div class="sync-error-bar" v-if="sync.status === 'error' && sync.msg"><i class="bi bi-exclamation-triangle me-1"></i>{{ sync.msg }}</div>
 
             <div class="p-4">
+            <div class="alert alert-info py-2 small d-flex align-items-center gap-2 no-print-hide eur-banner" v-if="isEur">
+                <i class="bi bi-currency-euro"></i><span>Tutarlar <b>Euro</b> gösteriliyor: her gelir ve gider, paranın el değiştirdiği ayın kuruyla çevrildi (dosya geliri teslimat ayı, peşin alış ilk Ocak, kredi taksitleri ödendiği ay, satış ömür sonu, yıllık giderler aylara eşit).</span>
+                <a href="#" class="ms-auto text-nowrap" @click.prevent="go('kur')">Kurlar</a>
+            </div>
+            <div class="alert alert-warning py-2 small" v-else-if="cur === 'EUR' && !fx.ok && ['tahminleme', 'raporlama', 'gunlukTutar'].includes(activeTab)"><i class="bi bi-exclamation-triangle"></i> Euro seçili ama {{ fx.missingYears.join(', ') }} yılı için kur girilmedi; tutarlar TL gösteriliyor. <a href="#" @click.prevent="go('kur')">Döviz Kuru sayfası</a></div>
 
             <!-- ================= Araç / Personel Gider Başlıkları ================= -->
             <div v-if="activeTab === 'giderBasliklari' || activeTab === 'personelGider'">
@@ -292,6 +305,74 @@
                 </div>
             </div>
 
+            <!-- ================= Döviz Kuru ================= -->
+            <div v-if="activeTab === 'kur'">
+                <div class="alert alert-warning d-flex gap-2 align-items-start" v-if="fx.missingYears.length">
+                    <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+                    <div><b>{{ fx.missingYears.join(', ') }} yılı için hiç kur girilmedi.</b> Euro görünümü için her tahminleme yılında en az bir ayın kuru girilmelidir; girilmeyen aylar otomatik doldurulur.</div>
+                </div>
+                <div class="alert alert-success py-2 small" v-else><i class="bi bi-check-circle"></i> Kur tablosu hazır. Sol menüdeki <b>Para Birimi</b> bölümünden € seçerek sonuçları Euro olarak görebilirsiniz.</div>
+                <div class="row g-4">
+                    <div class="col-xl-8">
+                        <div class="card shadow-sm border-0">
+                            <div class="card-header bg-white"><h5 class="mb-0">Aylık Euro Kuru <small class="text-muted fw-normal fs-6">· 1 € = ? ₺</small></h5></div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle mb-0 kur-table">
+                                        <thead class="table-light"><tr><th style="width:110px">Ay</th><th v-for="y in years" :key="y" style="min-width:130px">{{ y }}</th></tr></thead>
+                                        <tbody>
+                                            <tr v-for="(m, mi) in months" :key="mi">
+                                                <th>{{ m }}</th>
+                                                <td v-for="y in years" :key="y + '-' + mi" :class="{'kur-est': fx.est[y] && fx.est[y][mi]}">
+                                                    <num-input v-model="settings.kurlar[y][mi]" :step="0.1" decimals :placeholder="kurPlaceholder(y, mi)"></num-input>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                        <tfoot>
+                                            <tr class="fw-bold"><th>Yıllık ortalama</th>
+                                                <td v-for="y in years" :key="'avg' + y">{{ fx.avg(y) === null ? '-' : fx.avg(y).toLocaleString('tr-TR', { maximumFractionDigits: 2 }) }}
+                                                    <div class="small text-muted fw-normal">{{ (settings.kurlar[y] || []).filter(v => v !== null && v !== '').length }}/12 ay girildi</div></td>
+                                            </tr>
+                                        </tfoot>
+                                    </table>
+                                </div>
+                                <div class="small text-muted mt-2">Gri yazılı değerler otomatik tahmindir: boş ay, önceki ve sonraki girilen ay arasında düz artışla doldurulur (ilk girilen aydan önce / son girilen aydan sonra aynı kur). Yıllık ortalama 12 ayın (girilen + tahmini) ortalamasıdır. Yıl eklemek / silmek için Yakıt &amp; Enflasyon sayfasını kullanın.</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xl-4">
+                        <div class="card shadow-sm border-0 mb-4">
+                            <div class="card-header bg-white"><h6 class="mb-0 text-orange">Aylık artışla doldur</h6></div>
+                            <div class="card-body">
+                                <label class="form-label small">Ocak {{ years[0] }} kuru (1 € = ? ₺)</label>
+                                <num-input v-model="kurFill.start" :step="0.1" decimals></num-input>
+                                <label class="form-label small mt-2">Aylık artış (%)</label>
+                                <num-input v-model="kurFill.pct" :step="0.1" decimals></num-input>
+                                <div class="small text-muted mt-2">Örnek: 50 ve %1,5 → Şubat 50,75, Mart 51,51 … Tüm yıllar bu kuralla doldurulur; sonra istediğiniz ayı elle düzeltebilirsiniz.</div>
+                                <div class="d-flex gap-2 mt-3">
+                                    <button class="btn btn-orange btn-sm" @click="fillKur"><i class="bi bi-magic"></i> Tabloyu doldur</button>
+                                    <button class="btn btn-outline-secondary btn-sm" @click="clearKur"><i class="bi bi-trash"></i> Temizle</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card shadow-sm border-0">
+                            <div class="card-header bg-white"><h6 class="mb-0 text-orange">Euro'ya nasıl çevrilir?</h6></div>
+                            <div class="card-body small">
+                                <ul class="mb-0 ps-3 kur-rules">
+                                    <li><b>Dosya geliri:</b> dosyanın başladığı (teslimat) ayın kuru.</li>
+                                    <li><b>Araç alışı (peşin) ve tek seferlik giderler:</b> ilk kullanım yılının Ocak kuru.</li>
+                                    <li><b>Kredi taksiti (anapara + faiz):</b> her taksitin ödendiği ayın kuru.</li>
+                                    <li><b>Araç satışı:</b> aracın ömrünün son ayının (Aralık) kuru.</li>
+                                    <li><b>Bakım, lastik, sigorta, yakıt, temizlik, personel:</b> yıllık tutar 12 aya eşit dağıtılır, her ay kendi kuruyla çevrilir (pratikte yılın ortalama kuru).</li>
+                                    <li><b>Gün başı / dosya başı değerler:</b> çevrilmiş toplamlardan bölünerek bulunur.</li>
+                                    <li>Dosya, gün, araç sayıları ve oranlar (doluluk, karşılama) değişmez. Giriş sayfalarındaki tutarlar her zaman TL girilir.</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- ================= Tarihçe ================= -->
             <div v-if="activeTab === 'tarihce'">
                 <div class="d-flex justify-content-end mb-3 gap-2">
@@ -433,6 +514,7 @@
                                                     <div class="be-hint" v-if="priceLab && priceLab.grid[s] && priceLab.grid[s][y].costDay !== null"
                                                         :class="priceLab.grid[s][y].rate === null ? 'text-muted' : (priceLab.grid[s][y].profitDay >= 0 ? 'text-success' : 'text-danger')">
                                                         başabaş {{ money(priceLab.grid[s][y].costDay) }}</div>
+                                                    <div class="be-hint text-muted" v-if="isEur && custEntry.gunluk[s][y] !== null && custEntry.gunluk[s][y] !== ''">≈ € {{ formatCurrency(priceLab && priceLab.grid[s] ? priceLab.grid[s][y].rate : Number(custEntry.gunluk[s][y]) * fx.hk(y)) }}</div>
                                                 </td>
                                             </tr>
                                         </tbody>
@@ -1134,7 +1216,7 @@
                             <tr class="fw-bold"><td class="text-start" :colspan="years.length + 1">Net sahip olma maliyeti · yıllık ortalama {{ money(costOf(activeCostVehicle.id).annualNet) }}</td><td class="text-orange">{{ money(costOf(activeCostVehicle.id).netTotal) }}</td></tr>
                         </tfoot>
                     </table></div>
-                    <div class="small text-muted" v-if="costOf(activeCostVehicle.id).loan.credit">Kredi: {{ activeCostVehicle.vade }} ay, yıllık %{{ activeCostVehicle.faiz }} · aylık taksit {{ money(costOf(activeCostVehicle.id).loan.payment) }} · ödenen faiz {{ money(costOf(activeCostVehicle.id).loan.paidInterest) }}<span v-if="activeCostVehicle.vade > costOf(activeCostVehicle.id).life.length * 12"> (kalan anapara satış yılında kapatılır)</span>.</div>
+                    <div class="small text-muted" v-if="costOf(activeCostVehicle.id).loan.credit">Kredi: {{ activeCostVehicle.vade }} ay, yıllık %{{ activeCostVehicle.faiz }} · aylık taksit {{ moneyTL(costOf(activeCostVehicle.id).loan.payment) }} · ödenen faiz {{ costOf(activeCostVehicle.id).eur ? money(costOf(activeCostVehicle.id).loan.paidInterest) : moneyTL(costOf(activeCostVehicle.id).loan.paidInterest) }}<span v-if="activeCostVehicle.vade > costOf(activeCostVehicle.id).life.length * 12"> (kalan anapara satış yılında kapatılır)</span>.</div>
                     <small class="text-muted">Optimum satış yılı {{ costOf(activeCostVehicle.id).opt }}: araç ilk {{ costOf(activeCostVehicle.id).life.length }} yıl kullanılır, sonrası “—” gösterilir. Simülatörde aynı segmentte yıllık ortalama net maliyeti düşük olan araç önce dosya alır.</small>
                 </div>
             </div></div>

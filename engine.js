@@ -403,6 +403,63 @@
         return { start, peaks };
     }
 
+    /* ---------- Döviz (Euro) ----------
+       fx = { K(yıl, ay) → 1 € kaç ₺, hk(yıl) → (1/12) Σ 1/K } . TL tutarlar, paranın el değiştirdiği ayın kuruyla çevrilir:
+       • yıllık giderler (işletme, yakıt, personel) her aya eşit dağıtılır → yıl içindeki aylık kurlarla (hk)
+       • tek seferlik gider ve peşin alış → ilk kullanım yılının Ocak kuru; kredi taksitleri → taksitin ayı
+       • araç satışı ve erken kapanan kredi anaparası → ömrün son ayı (Aralık); dosya geliri → teslimat ayı */
+    function makeFx(table, years) {
+        const ys = [...years].map(Number).sort((a, b) => a - b), pts = [];
+        ys.forEach((y, yi) => { const row = (table || {})[y] || []; for (let m = 0; m < 12; m++) { const v = row[m]; if (filled(v) && num(v) > 0) pts.push([yi * 12 + m, num(v)]); } });
+        const missingYears = ys.filter(y => !((table || {})[y] || []).some(v => filled(v) && num(v) > 0));
+        const grid = {}, est = {};
+        ys.forEach((y, yi) => {
+            grid[y] = []; est[y] = [];
+            for (let m = 0; m < 12; m++) {
+                const t = yi * 12 + m, own = (table || {})[y] && (table[y][m]);
+                if (filled(own) && num(own) > 0) { grid[y][m] = num(own); est[y][m] = false; continue; }
+                let v = null;
+                if (pts.length) {
+                    let lo = null, hi = null;
+                    for (const p of pts) { if (p[0] <= t) lo = p; if (p[0] >= t && !hi) hi = p; }
+                    if (lo && hi) v = hi[0] === lo[0] ? lo[1] : lo[1] + (hi[1] - lo[1]) * (t - lo[0]) / (hi[0] - lo[0]);
+                    else v = (lo || hi)[1];
+                }
+                grid[y][m] = v; est[y][m] = true;
+            }
+        });
+        const K = (y, m) => { const r = grid[y]; const v = r ? r[m] : null; return v > 0 ? v : 1; };
+        const hkc = {}; ys.forEach(y => { hkc[y] = grid[y].reduce((a, v) => a + (v > 0 ? 1 / v : 1), 0) / 12; });
+        const avg = y => { const r = grid[y] || []; const v = r.filter(x => x > 0); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+        return { K, hk: y => (hkc[y] === undefined ? 1 : hkc[y]), grid, est, avg, ok: pts.length > 0 && !missingYears.length, missingYears };
+    }
+    /* TL gider tablosunu Euro'ya çevirir (her kalem ödendiği ayın kuruyla) */
+    function convertCostTable(ct, v, fx) {
+        const L = ct.life, first = L[0], last = L[L.length - 1];
+        const rows = ct.rows.map(r => {
+            const vals = {}; L.forEach(y => { vals[y] = 0; });
+            if (r.grup === 'isletme') L.forEach(y => { vals[y] = r.tip === 'tek' ? r.vals[y] / fx.K(y, 0) : r.vals[y] * fx.hk(y); });
+            return { ...r, vals };
+        });
+        const buyRow = rows.find(r => r.grup === 'alis'), intRow = rows.find(r => r.grup === 'faiz');
+        if (L.length && buyRow) {
+            if (ct.loan.credit) {
+                loanSchedule(v.alisBedeli, v.vade, v.faiz).months.forEach((m, i) => {
+                    const yi = Math.floor(i / 12);
+                    if (yi < L.length) { const y = L[yi], k = fx.K(y, i % 12); buyRow.vals[y] += m.principal / k; if (intRow) intRow.vals[y] += m.interest / k; }
+                    else buyRow.vals[last] += m.principal / fx.K(last, 11); // erken kapama: satış ayında
+                });
+            } else buyRow.vals[first] = num(v.alisBedeli) / fx.K(first, 0);
+        }
+        const sumG = (gr, y) => rows.filter(r => r.grup === gr).reduce((s, r) => s + r.vals[y], 0);
+        const totals = {}, opTotals = {}, buyTotals = {}, intTotals = {}; let total = 0;
+        L.forEach(y => { opTotals[y] = sumG('isletme', y); buyTotals[y] = sumG('alis', y); intTotals[y] = sumG('faiz', y); totals[y] = opTotals[y] + buyTotals[y] + intTotals[y]; total += totals[y]; });
+        const sale = ct.sale ? ct.sale / fx.K(last, 11) : 0, netTotal = total - sale;
+        const paidInterest = intRow ? Object.values(intRow.vals).reduce((a, b) => a + b, 0) : 0;
+        return { ...ct, rows, totals, opTotals, buyTotals, intTotals, total, sale, netTotal, annualNet: netTotal / Math.max(1, L.length),
+            loan: { ...ct.loan, paidInterest, creditTotal: (buyRow ? Object.values(buyRow.vals).reduce((a, b) => a + b, 0) : 0) + paidInterest, tl: true }, eur: true };
+    }
+
     /* Personel giderleri: kişi başı yıllık tutar x personel sayısı, enflasyonla artar (filo geneli sabit gider) */
     function personnelTable(settings, years) {
         const k = inflationFactors(years, settings.enflasyonOranlari || {});
@@ -417,12 +474,13 @@
 
     /* sim: { target: 'manual' | 50..100 | 'best', up: bool, down: bool }
        countsOverride: { vehicleId: adet } verilirse araç adetleri yerine kullanılır (senaryo karşılaştırma) */
-    function buildReport({ vehicles, files, settings, cutHour, sim: simOpt, countsOverride }) {
+    function buildReport({ vehicles, files, settings, cutHour, sim: simOpt, countsOverride, fx }) {
+        fx = fx || null; // Euro görünümü: simülasyon (dosya dağıtımı, adetler) TL ile yapılır, parasal sonuçlar ayın kuruyla çevrilir
         simOpt = simOpt || settings.sim || {};
         const target = simOpt.target === undefined || simOpt.target === null ? 'manual' : simOpt.target;
         const years = sortedYears(settings);
-        const vehicleCosts = {};
-        vehicles.forEach(v => { vehicleCosts[v.id] = costTable(v, settings); });
+        const vehicleCosts = {}, vcTL = {};
+        vehicles.forEach(v => { vcTL[v.id] = costTable(v, settings); vehicleCosts[v.id] = fx ? convertCostTable(vcTL[v.id], v, fx) : vcTL[v.id]; });
         const complete = vehicles.filter(v => isVehicleComplete(v, settings));
         const incomplete = vehicles.filter(v => !isVehicleComplete(v, settings));
         const vIndex = v => vehicles.indexOf(v);
@@ -455,7 +513,7 @@
         const rate = (seg, y) => avgOf(seg, y).rate;
         const segModels = {};
         complete.forEach(v => { (segModels[v.segment] = segModels[v.segment] || []).push(v); });
-        Object.values(segModels).forEach(list => list.sort((a, b) => vehicleCosts[a.id].annualNet - vehicleCosts[b.id].annualNet || vIndex(a) - vIndex(b)));
+        Object.values(segModels).forEach(list => list.sort((a, b) => vcTL[a.id].annualNet - vcTL[b.id].annualNet || vIndex(a) - vIndex(b)));
 
         // Filo eğrisi: her segment için araç sayısına göre karşılama ve (personel hariç) net
         const curves = {}, counts = {}, noModel = [], marginal = {};
@@ -463,7 +521,7 @@
         // Personel kilidi açıksa personel sayısı = araç ÷ (kaç araca 1 personel); her araç personel maliyetinin 1/oran'ını getirir
         const pRatio = num(settings.personelOrani), autoPers = !settings.personelKilit && pRatio > 0;
         const pk = inflationFactors(years, settings.enflasyonOranlari || {}), pPer = (settings.personelTanimlari || []).reduce((a, h) => a + num(h.tutar), 0);
-        const persOf = v => (autoPers ? vehicleCosts[v.id].life.reduce((a, y) => a + pPer * pk[y], 0) / pRatio : 0);
+        const persOf = v => (autoPers ? vcTL[v.id].life.reduce((a, y) => a + pPer * pk[y], 0) / pRatio : 0);
         const allSegs = [...new Set([...SEGMENTS, ...Object.keys(bySeg)])];
         allSegs.forEach(seg => {
             const demand = bySeg[seg] || [], models = segModels[seg] || [];
@@ -479,9 +537,9 @@
             // (tedarikçi tutarı girilmemiş yılda dosya kaybedilmiş sayılır, marj 0)
             const mg = y => avgOf(seg, y).mg;
             const rs = {}, ms = {}; // aracın ömrü boyunca günlük tutar ve tedarikçi marjı toplamları
-            models.forEach(v => { const L = vehicleCosts[v.id].life; rs[v.id] = L.reduce((x, y) => x + rate(seg, y), 0); ms[v.id] = L.reduce((x, y) => x + mg(y), 0); });
+            models.forEach(v => { const L = vcTL[v.id].life; rs[v.id] = L.reduce((x, y) => x + rate(seg, y), 0); ms[v.id] = L.reduce((x, y) => x + mg(y), 0); });
             const wk = k => Math.min(period, Math.round((curve[k] ? curve[k].days : 0) * scale));
-            const fNet = (k, v) => wk(k) * rs[v.id] - vehicleCosts[v.id].netTotal;
+            const fNet = (k, v) => wk(k) * rs[v.id] - vcTL[v.id].netTotal;
             const fTot = (k, v) => fNet(k, v) - wk(k) * ms[v.id] - persOf(v); // aracın işi için tedarikçi marjından vazgeçilir; personel payı eklenir
             const allMg = years.reduce((x, y) => x + mg(y), 0);
             const base = curve.reduce((x, c, k) => x + wk(k) * allMg, 0); // hiç araç yokken tedarikçi marjı
@@ -499,18 +557,26 @@
                 return out;
             };
             const sNet = series(fNet), sTot = series(fTot);
+            // Euro görünümünde eğrinin net değerleri Euro ile; hedef seçimi TL üzerinden yapılır
+            let sNetD = sNet, sTotD = sTot;
+            if (fx) {
+                const rsE = {}; models.forEach(v => { rsE[v.id] = vcTL[v.id].life.reduce((x, y) => x + rate(seg, y) * fx.hk(y), 0); });
+                const persE = v => (autoPers ? vcTL[v.id].life.reduce((a, y) => a + pPer * pk[y] * fx.hk(y), 0) / pRatio : 0);
+                const fNetE = (k, v) => wk(k) * rsE[v.id] - vehicleCosts[v.id].netTotal;
+                sNetD = series(fNetE); sTotD = series((k, v) => fNetE(k, v) - persE(v));
+            }
             let cumF = 0;
             for (let N = 0; N <= maxN; N++) {
                 if (N > 0) cumF += (curve[N - 1] || { files: 0 }).files;
-                points.push({ n: N, coverage: total ? cumF / total * 100 : 0, handled: cumF, net: sNet ? sNet[N] : null, total: sTot ? sTot[N] + base : null });
+                points.push({ n: N, coverage: total ? cumF / total * 100 : 0, handled: cumF, net: sNetD ? sNetD[N] : null, total: sTotD ? sTotD[N] + base : null, sel: sTot ? sTot[N] + base : null });
             }
             const hasSup = years.some(y => avgOf(seg, y).hasSup);
             // +1 araç etkisi: bu modelden bir araç daha eklenirse (ucuzdan pahalıya sıraya girer) şirket neti ne kadar değişir
             if (cheapest) {
                 const baseTot = existing.reduce((a, v, k) => a + fTot(k, v), 0);
                 models.forEach(v => {
-                    const c = vehicleCosts[v.id].annualNet;
-                    let pos = existing.findIndex(x => vehicleCosts[x.id].annualNet > c); if (pos < 0) pos = existing.length;
+                    const c = vcTL[v.id].annualNet;
+                    let pos = existing.findIndex(x => vcTL[x.id].annualNet > c); if (pos < 0) pos = existing.length;
                     const arr = [...existing.slice(0, pos), v, ...existing.slice(pos)];
                     marginal[v.id] = arr.reduce((a, u, k) => a + fTot(k, u), 0) - baseTot;
                 });
@@ -519,7 +585,7 @@
             if (target === 'manual') return;
             let N = 0;
             if (target === 'best') {
-                if (cheapest) { let bestV = points[0].total; points.forEach(p => { if (p.total > bestV + 1e-6) { bestV = p.total; N = p.n; } }); } // filo neti + tedarikçi marjı en yüksek
+                if (cheapest) { let bestV = points[0].sel; points.forEach(p => { if (p.sel > bestV + 1e-6) { bestV = p.sel; N = p.n; } }); } // filo neti + tedarikçi marjı en yüksek
             } else {
                 const need = Number(target) / 100 * total;
                 N = points.findIndex(p => p.handled >= need - 1e-9); if (N < 0) N = maxN;
@@ -550,9 +616,9 @@
             ct.life.forEach(y => {
                 // Gelir: her dosyanın tüm kiralama günü (24 saat + 3 saat kuralıyla tam gün), dosyanın başladığı yılın tutarıyla.
                 // Yıl sonuna sarkan dosya (ör. 25 Aralık – 2 Ocak) da tamamen başladığı yıla ve teslimat ayına yazılır; 365 günle kırpılmaz.
-                const revenue = revOf(st.price, y), sale = y === soldYear ? num(u.v.satisTutari) : 0;
+                const mRev = st.m.map((m, i) => revOf(m.price, y) / (fx ? fx.K(y, i) : 1)); // dosya geliri teslimat ayının kuruyla
+                const revenue = fx ? mRev.reduce((a, b) => a + b, 0) : revOf(st.price, y), sale = y === soldYear ? ct.sale : 0;
                 const op = ct.opTotals[y], buy = ct.buyTotals[y], int = ct.intTotals[y], cost = op + buy + int;
-                const mRev = st.m.map(m => revOf(m.price, y));
                 byYear[y] = { work, idle, revenue, sale, op, buy, int, cost, pers: 0, persShare: 0, net: revenue + sale - cost, mRev };
             });
             const months = st.m.map((m, i) => ({ work: Math.round(m.days * scale), occ: st.occ[i] * scale, files: m.files * scale }));
@@ -561,6 +627,7 @@
         });
         // Personel gideri: filo geneli sabit gider; o yıl aktif araçlara, aldıkları dosya sayısı oranında dağıtılır
         const pers = personnelTable(settings, years);
+        if (fx) { pers.rows.forEach(r => years.forEach(y => { r.vals[y] *= fx.hk(y); })); years.forEach(y => { pers.totals[y] *= fx.hk(y); }); pers.eur = true; }
         years.forEach(y => {
             const act = plates.filter(p => p.byYear[y]);
             if (!act.length || !pers.totals[y]) return;
@@ -571,12 +638,13 @@
             });
         });
         const customers = [...new Set(files.map(f => f.c || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'tr'));
-        return { years, plates, vehicleCosts, pers, sim, curves, counts, noModel, incomplete, segModels, marginal, rates: RT, segAvg: avgOf, customers,
+        const rates = { ...RT, rateM: (c, sg, y, m) => RT.rate(c, sg, y) / (fx ? fx.K(y, m) : 1) }; // ayın kuruyla günlük tutar
+        return { years, plates, vehicleCosts, pers, sim, curves, counts, noModel, incomplete, segModels, marginal, rates, segAvg: avgOf, customers, fx,
             missingRates: [...missingRates], unsold: [...unsold], period, scale, dataYear: sim.dataYear, target };
     }
 
     const api = { SEGMENTS, FUELS, DEFAULT_HEADERS, parseDate, formatDate, normSegment, normCustomer, parseCSV, rowsToRecords, tableToRows, missingHeaders, hasCustomerColumn,
-        makeRates, priceKey, splitKey, NONE_KEY,
+        makeRates, priceKey, splitKey, NONE_KEY, makeFx, convertCostTable,
         sortedYears, inflationFactors, loanSchedule, costTable, COST_TYPES, costType, personnelTable, missingFields, isVehicleComplete, simulate, fleetCurve, dailyPeaks,
         freeAtOf, buildReport, rentDays, adjustFiles };
     if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;

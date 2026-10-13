@@ -406,3 +406,18 @@ tr.cursor-pointer:hover { background: #fff4ec; }
 .cash-table tr.cash-year:hover td { background: #fff4ec; }
 .cash-table tr.cash-month td { font-size: .8rem; color: #495057; background: #fcfcfd; }
 .cash-table tr.cash-month td:first-child { padding-left: 28px; }
+
+/* Para birimi seçici (sidebar) */
+.cur-box { margin: 12px 0 10px; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.06); }
+.cur-label { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: #adb5bd; margin-bottom: 6px; }
+.cur-switch { display: flex; background: rgba(0,0,0,.25); border-radius: 8px; padding: 3px; gap: 3px; }
+.cur-switch button { flex: 1; border: 0; background: transparent; color: #dee2e6; font-weight: 600; font-size: .9rem; padding: 6px 0; border-radius: 6px; cursor: pointer; }
+.cur-switch button.on { background: #ff6600; color: #fff; }
+.cur-switch button.off { opacity: .55; }
+.cur-note { font-size: .7rem; color: #adb5bd; margin-top: 6px; line-height: 1.25; }
+/* Döviz kuru tablosu */
+.kur-table td.kur-est input::placeholder { color: #adb5bd; font-style: italic; }
+.kur-table tfoot td, .kur-table tfoot th { background: #fff4ec; }
+.kur-rules li { margin-bottom: 4px; }
+.eur-banner { background: #eef6ff; border-color: #cfe2ff; }
+@media print { .cur-box { display: none !important; } }

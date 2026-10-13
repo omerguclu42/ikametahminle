@@ -99,6 +99,24 @@ window.GUIDE = [
         ]
     },
     {
+        id: 'kur', title: 'Döviz Kuru ve Euro Görünümü', icon: 'bi-currency-euro',
+        intro: 'Tahminleme yıllarının aylık Euro kuru girilir (1 € = ? ₺). Sol menüdeki Para Birimi bölümünden € seçilince sonuç ekranları (Simülatör, Raporlama, Günlük Tutar analizleri) Euro gösterir. Seçim kişiseldir (bu tarayıcıda saklanır); kur tablosu tüm kullanıcılar için ortaktır.',
+        sections: [
+            { h: 'Kur girişi', items: [
+                'Satırlarda aylar, sütunlarda tahminleme yılları; en altta yılın ortalama kuru otomatik hesaplanır.',
+                'Tüm ayları girmek gerekmez: boş ay, önceki ve sonraki girilen ay arasında düz artışla doldurulur (gri yazı). Her yılda en az bir ay girilmelidir; aksi hâlde Euro görünümü kullanılamaz.',
+                '"Aylık artışla doldur": Ocak kuru ve aylık artış oranı yazılınca tüm tablo doldurulur; sonra istenen ay elle düzeltilir.'
+            ] },
+            { h: 'Euro\'ya çevirme kuralı', items: [
+                'Her tutar, paranın el değiştirdiği ayın kuruyla çevrilir. Simülasyon (dosya dağıtımı, araç adetleri, hedefler) TL ile yapılır; para birimi seçimi operasyonel sonuçları değiştirmez.',
+                'Dosya geliri: teslimat ayının kuru. Peşin araç alışı ve tek seferlik giderler: ilk kullanım yılının Ocak kuru. Kredi taksitleri (anapara + faiz): ödendiği ayın kuru. Araç satışı ve erken kapanan kredi anaparası: ömrün son ayının (Aralık) kuru.',
+                'Yıllık giderler (işletme, yakıt, bakım, lastik, sigorta, personel): 12 aya eşit dağıtılır, her ay kendi kuruyla çevrilir.',
+                'Gün başı ve dosya başı değerler çevrilmiş toplamlardan bulunur. Dosya, gün, araç sayıları ve oranlar değişmez.',
+                'Euro görünümünde Duyarlılık Analizi\'ne "Euro kuru" maddesi eklenir: kur ±% değişince sonucun ne kadar değiştiği.'
+            ] }
+        ]
+    },
+    {
         id: 'tarihce', title: 'Tarihçe (Dosyalar)', icon: 'bi-file-earmark-spreadsheet',
         intro: 'Simülasyonun dayandığı geçmiş ikame dosyaları. Dosya numarası, segment, müşteri, araç teslimat tarihi ve araç iade tarihi (saatli) yüklenir.',
         sections: [

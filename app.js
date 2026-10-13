@@ -17,6 +17,9 @@ const NO_CUST_LABEL = 'Müşterisi belirtilmemiş';
 const rateKey = c => c || E.NONE_KEY; // müşteri tutar tablosundaki anahtar
 const custLabel = c => c || NO_CUST_LABEL;
 const STAT_KEYS = ['total', 'handled', 'own', 'up', 'down', 'days'];
+const ALL_MONTHS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+const OUTPUT_TABS = ['tahminleme', 'raporlama', 'gunlukTutar']; // Euro seçimi yalnızca sonuç ekranlarını etkiler; giriş sayfaları her zaman TL
+const CUR_KEY = 'eurocross_ikame_para_birimi';
 /* Eski tek seçimli filtreleri ('all' / tek değer) diziye çevirir */
 function normFilters(f) {
     const d = EMPTY_FILTERS(); f = f || {};
@@ -63,6 +66,7 @@ function defaultSettings() {
         gunlukTutar: {},
         tedarikciTutar: {},
         musteriTutar: {},
+        kurlar: {}, // { yıl: [12 ay] } 1 € = ? ₺
         sim: DEFAULT_SIM(),
         scenarios: []
     };
@@ -102,6 +106,8 @@ function normalizeSettings(s) {
     // Müşteri bazlı günlük tutarlar: { müşteri: { gunluk: {seg: {yıl}}, tedarikci: {seg: {yıl}} } }
     s.musteriTutar = s.musteriTutar && typeof s.musteriTutar === 'object' && !Array.isArray(s.musteriTutar) ? s.musteriTutar : {};
     Object.keys(s.musteriTutar).forEach(c => fillCustRates(s.musteriTutar[c] = s.musteriTutar[c] || {}, s.enflasyonYillari));
+    s.kurlar = s.kurlar && typeof s.kurlar === 'object' ? s.kurlar : {};
+    s.enflasyonYillari.forEach(y => { const r = Array.isArray(s.kurlar[y]) ? s.kurlar[y] : []; s.kurlar[y] = Array.from({ length: 12 }, (_, m) => (r[m] === undefined || r[m] === '' ? null : r[m])); });
     s.sim = { ...DEFAULT_SIM(), ...(s.sim || {}) };
     if (s.sim.target !== 'manual' && s.sim.target !== 'best') s.sim.target = TARGETS.includes(Number(s.sim.target)) ? Number(s.sim.target) : 'manual';
     s.sim.up = !!s.sim.up; s.sim.down = !!s.sim.down; s.sim.growth = GROWTHS.includes(Number(s.sim.growth)) ? Number(s.sim.growth) : 0;
@@ -136,7 +142,7 @@ function normalizeVehicle(v) {
 
 /* ---- Sayı alanı: binlik ayraç + ok ile 1'er artırma/azaltma ---- */
 const NumInput = {
-    props: { modelValue: { default: null }, step: { type: Number, default: 1 }, decimals: { type: Boolean, default: false }, min: { type: Number, default: 0 }, invalid: Boolean, disabled: Boolean },
+    props: { modelValue: { default: null }, step: { type: Number, default: 1 }, decimals: { type: Boolean, default: false }, min: { type: Number, default: 0 }, invalid: Boolean, disabled: Boolean, placeholder: { type: String, default: '' } },
     emits: ['update:modelValue'],
     data() { return { text: this.fmt(this.modelValue) }; },
     watch: {
@@ -181,7 +187,7 @@ const NumInput = {
     },
     template: `
     <div class="input-group input-group-sm num-input" :class="{'is-invalid-group': invalid}">
-        <input type="text" inputmode="decimal" class="form-control" :class="{'is-invalid': invalid}" :value="text" :disabled="disabled"
+        <input type="text" inputmode="decimal" class="form-control" :class="{'is-invalid': invalid}" :value="text" :disabled="disabled" :placeholder="placeholder"
                @input="onInput" @keydown.up.prevent="bump(1)" @keydown.down.prevent="bump(-1)">
         <span class="input-group-text p-0 spin">
             <button type="button" tabindex="-1" @click="bump(1)" :disabled="disabled"><i class="bi bi-caret-up-fill"></i></button>
@@ -288,6 +294,7 @@ const PAGE_META = {
     tarihce: ['Tarihçe (Dosyalar)', 'Simülasyonun dayandığı dosya teslim / iade verisini yükleyin.'],
     iadeSaati: ['İade Dönüş Saati', 'Geç iade edilen aracın ertesi güne kalacağı saat sınırını belirleyin.'],
     gunlukTutar: ['Günlük Tutar', 'Müşteri, segment ve yıla göre Eurocross Turkey günlük tutarı; girilen tutarla gelir, gider, kârlılık ve başabaş tahmini.'],
+    kur: ['Döviz Kuru', 'Tahminleme yıllarının aylık Euro kurunu girin (1 € = ? ₺). Euro görünümünde her tutar, paranın el değiştirdiği ayın kuruyla çevrilir.'],
     rehber: ['Çalışma Rehberi', 'Her sayfanın başlıkları ne işe yarar, hesaplar hangi mantıkla yapılır.']
 };
 const C = { orange: '#ff6600', orangeL: '#ffa94d', dark: '#343a40', grey: '#adb5bd', green: '#2b8a3e', red: '#e03131', blue: '#1c7ed6', purple: '#7048e8', amber: '#f59f00' };
@@ -301,6 +308,7 @@ const app = createApp({
                 { id: 'personelGider', label: 'Personel Gider Başlıkları', icon: 'bi-people' },
                 { id: 'aracGiris', label: 'Araç Veri Girişi', icon: 'bi-car-front' },
                 { id: 'yakitVeEnflasyon', label: 'Yakıt & Enflasyon', icon: 'bi-graph-up-arrow' },
+                { id: 'kur', label: 'Döviz Kuru', icon: 'bi-currency-euro' },
                 { id: 'tarihce', label: 'Tarihçe (Dosyalar)', icon: 'bi-file-earmark-spreadsheet' },
                 { id: 'iadeSaati', label: 'İade Dönüş Saati', icon: 'bi-clock-history' },
                 { id: 'gunlukTutar', label: 'Günlük Tutar', icon: 'bi-cash-coin' }
@@ -342,12 +350,20 @@ const app = createApp({
             reportSeg: null,
             // Günlük Tutar: seçili müşteri ve kopyalama kaynağı
             gtCust: null, gtCopyFrom: null, gtSel: { sg: null, y: null }, gtOpen: {},
+            cur: (() => { try { return localStorage.getItem(CUR_KEY) === 'EUR' ? 'EUR' : 'TRY'; } catch (e) { return 'TRY'; } })(),
+            kurFill: { start: null, pct: 1.5 },
             sensP: 10, sensData: null, sensBusy: false, margData: {}, margBusy: false,
             ds: { type: 'dosya', status: 'all', search: '', page: 1, size: 50 }
         };
     },
     computed: {
         authed() { return this.auth.state === 'in' && this.sync.loaded; },
+        /* Döviz kuru: girilen aylar + boş ayların doğrusal tahmini (önceki / sonraki girilen aya göre) */
+        fx() { return E.makeFx(this.settings.kurlar, this.years); },
+        /* Euro görünümü: seçim Euro ise, tüm yıllarda en az bir kur girilmişse ve sonuç ekranındaysa */
+        isEur() { return this.cur === 'EUR' && this.fx.ok && OUTPUT_TABS.includes(this.activeTab); },
+        fxArg() { return this.isEur ? this.fx : null; },
+        curSym() { return this.isEur ? '€' : '₺'; },
         syncLabel() {
             if (this.sync.status === 'local') return 'Yerel mod (bulut kapalı)';
             if (!this.sync.online) return 'Çevrimdışı';
@@ -420,7 +436,7 @@ const app = createApp({
                     const b = p.byYear[y], S = fleet[p.seg] || (fleet[p.seg] = {}), o = S[y] || (S[y] = { cost: 0, days: 0, op: 0, capex: 0, plates: 0 });
                     o.op += b.op; o.capex += capex / L; o.cost += b.op + capex / L; o.days += d; o.plates++;
                     const q = pf[y] || (pf[y] = { pers: 0, files: 0 }); q.pers += b.pers; q.files += p.files;
-                    for (const k in p.price) { const [sg, cc] = E.splitKey(k); if (cc !== c) continue; const C = cust[sg] || (cust[sg] = {}); C[y] = (C[y] || 0) + p.price[k] * sc; }
+                    p.mPrice.forEach((pr, mi) => { for (const k in pr) { const [sg, cc] = E.splitKey(k); if (cc !== c) continue; const C = cust[sg] || (cust[sg] = {}), a = C[y] || (C[y] = Array(12).fill(0)); a[mi] += pr[k] * sc; } });
                 });
             });
             const st = R.sim.segStats, avgAll = {};
@@ -430,10 +446,12 @@ const app = createApp({
             const cell = (sg, y) => {
                 const x = st[sg] && st[sg].c[c], a = avgAll[sg] || { n: 0, d: 0 }, o = fleet[sg] && fleet[sg][y], q = pf[y];
                 const handled = x ? x.handled * sc : 0, avgDays = x && x.handled ? x.days / x.handled : (a.n ? a.d / a.n : 0);
-                const days = cust[sg] && cust[sg][y] ? cust[sg][y] : 0, rate = rateOf(sg, y);
+                const dm = cust[sg] && cust[sg][y] ? cust[sg][y] : null, days = dm ? dm.reduce((a, b) => a + b, 0) : 0, rateTL = rateOf(sg, y);
+                // Euro görünümünde günlük tutar: gelirin teslimat aylarının kuruyla çevrilmiş karşılığı ÷ gün (gün yoksa yılın aylık kurlarıyla)
+                const rate = rateTL === null ? null : (!R.fx ? rateTL : (days ? dm.reduce((a, d, mi) => a + d * rateTL / R.fx.K(y, mi), 0) / days : rateTL * R.fx.hk(y)));
                 const vehDay = o && o.days > 0 ? o.cost / o.days : null, ppf = q && q.files > 0 ? q.pers / q.files : 0, persDay = avgDays > 0 ? ppf / avgDays : 0;
                 const cd = vehDay === null ? null : vehDay + persDay;
-                const r = { sg, y, rate, costDay: cd, avgDays, handled, days, hasFleet: cd !== null, plates: o ? o.plates : 0, vehDay, persDay, ppf,
+                const r = { sg, y, rate, rateTL, costDay: cd, avgDays, handled, days, hasFleet: cd !== null, plates: o ? o.plates : 0, vehDay, persDay, ppf,
                     fleet: o ? { op: o.op, capex: o.capex, cost: o.cost, days: o.days, plates: o.plates } : null, persFleet: q ? { pers: q.pers, files: q.files } : null,
                     breakdown: vehDay === null ? null : { op: o.op / o.days, capex: o.capex / o.days, pers: persDay } };
                 if (rate !== null && cd !== null) {
@@ -505,17 +523,18 @@ const app = createApp({
                     for (let mi = 0; mi < 12; mi++) {
                         const r = at(y, mi); if (!r) continue;
                         r.op += b.op / 12 * fv; r.pers += b.pers / 12 * fp;
-                        const pr = p.mPrice[mi]; for (const k in pr) { const [sg, cc] = E.splitKey(k); if (cc !== c) continue; r.days += pr[k] * sc; r.rev += pr[k] * sc * RT.rate(c, sg, y); }
+                        const pr = p.mPrice[mi]; for (const k in pr) { const [sg, cc] = E.splitKey(k); if (cc !== c) continue; r.days += pr[k] * sc; r.rev += pr[k] * sc * RT.rateM(c, sg, y, mi); }
                         r.files += ((p.mCf[mi] || {})[c] || 0) * sc;
                     }
                 });
                 // Araç alışı: peşin → ilk yılın Ocak'ı; kredili → aylık taksit, ömür sonunda kalan anapara
+                const K = R.fx ? R.fx.K : () => 1; // Euro: her ödeme kendi ayının kuruyla
                 if (ct.loan.credit) {
                     E.loanSchedule(v.alisBedeli, v.vade, v.faiz).months.forEach((m, k) => {
-                        const yIdx = Math.floor(k / 12), r = yIdx < L ? at(life[yIdx], k % 12) : at(life[L - 1], 11);
-                        if (r) r.capex += (yIdx < L ? m.principal + m.interest : m.principal) * sh;
+                        const yIdx = Math.floor(k / 12), yy = yIdx < L ? life[yIdx] : life[L - 1], mm = yIdx < L ? k % 12 : 11, r = at(yy, mm);
+                        if (r) r.capex += (yIdx < L ? m.principal + m.interest : m.principal) / K(yy, mm) * sh;
                     });
-                } else { const r = at(life[0], 0); if (r) r.capex += (Number(v.alisBedeli) || 0) * sh; }
+                } else { const r = at(life[0], 0); if (r) r.capex += (Number(v.alisBedeli) || 0) / K(life[0], 0) * sh; }
                 const last = life[L - 1], rs = at(last, 11); if (rs) rs.sale += p.byYear[last].sale * sh;
             });
             if (!any) return { years: [], turn: null, low: null, tot: null };
@@ -599,7 +618,7 @@ const app = createApp({
         /* Hizmet sayısı değişimi uygulanmış dosyalar */
         simFiles() { return E.adjustFiles(this.parsedFiles, this.settings.sim.growth); },
         report() {
-            return E.buildReport({ vehicles: this.vehicles, files: this.simFiles, settings: this.settings, cutHour: this.timeRule, sim: this.settings.sim });
+            return E.buildReport({ vehicles: this.vehicles, files: this.simFiles, settings: this.settings, cutHour: this.timeRule, sim: this.settings.sim, fx: this.fxArg });
         },
         isAuto() { return false; },
         incompleteVehicles() { return this.vehicles.filter(v => !this.isComplete(v)); },
@@ -621,7 +640,8 @@ const app = createApp({
                     && (!this.fuelHeaders.length || (fuels.length ? fuels : FUELS).every(f => yrs.every(y => Number(s.yakitFiyatlari[f][y]) > 0))),
                 tarihce: this.historicalData.length > 0,
                 iadeSaati: true,
-                gunlukTutar: this.rateCustomers.length > 0 && !this.custMissingOwn.length
+                gunlukTutar: this.rateCustomers.length > 0 && !this.custMissingOwn.length,
+                kur: this.fx.ok
             };
         },
 
@@ -740,7 +760,7 @@ const app = createApp({
                 if (cs) {
                     const pc = PC.get(p.id), sh = pc.tot ? sumC(pc.cd) / pc.tot : 0, fv = vsh(p, AL), fp = fsh(pc);
                     o.work *= sh; o.idle *= sh; ['sale', 'op', 'buy', 'int'].forEach(k => { o[k] *= fv; }); o.pers *= fp;
-                    let rev = 0; for (const k in pc.keys) { const [sg, c] = E.splitKey(k); if (cs.has(c)) rev += pc.keys[k] * sc * RT.rate(c, sg, y); }
+                    const rev = this.revOf(p, ms || ALL_MONTHS, cs, y);
                     o.revenue = rev; o.f = sumC(pc.cf) * sc;
                 }
                 o.cost = o.op + o.buy + o.int; o.net = o.revenue + o.sale - o.cost - o.pers;
@@ -749,8 +769,8 @@ const app = createApp({
             /* Geri ödeme için tüm yıl (ay filtresinden bağımsız) sonuç; müşteri seçiliyse o müşterilerin payı */
             const recFull = (p, y) => {
                 const r = p.byYear[y]; if (!cs) return { ...r, f: p.files };
-                let a = 0, t = 0, rev = 0;
-                for (const k in p.price) { const d = p.price[k], [sg, c] = E.splitKey(k); t += d; if (cs.has(c)) { a += d; rev += d * sc * RT.rate(c, sg, y); } }
+                let a = 0, t = 0; const rev = this.revOf(p, ALL_MONTHS, cs, y);
+                for (const k in p.price) { const d = p.price[k], c = E.splitKey(k)[1]; t += d; if (cs.has(c)) a += d; }
                 const sh = t ? a / t : 0, fv = vsh(p, AF), fp = fsh(PF.get(p.id));
                 const o = { work: r.work * sh, idle: r.idle * sh, revenue: rev, sale: r.sale * fv, op: r.op * fv, buy: r.buy * fv, int: r.int * fv, pers: r.pers * fp, f: 0 };
                 o.cost = o.op + o.buy + o.int; o.net = o.revenue + o.sale - o.cost - o.pers; return o;
@@ -795,15 +815,15 @@ const app = createApp({
                 p.cross.forEach(c => {
                     if (!X.vset && X.sset && !X.sset.has(c.req)) return;
                     if (cs && !cs.has(c.c || NO_CUST)) return;
-                    let fl = c.files, dy = c.days;
-                    if (ms) { fl = 0; dy = 0; ms.forEach(i => { fl += c.m[i].files; dy += c.m[i].days; }); }
+                    const mm = ms || ALL_MONTHS; let fl = 0, dy = 0; mm.forEach(i => { fl += c.m[i].files; dy += c.m[i].days; });
                     if (!fl) return;
-                    const t = cross[c.kind], d = dy * sc; t.files += fl * sc; t.days += d;
-                    ys.forEach(y => {
-                        const rq = RT.rate(c.c, c.req, y), gv = RT.rate(c.c, c.given, y);
+                    const t = cross[c.kind]; t.files += fl * sc; t.days += dy * sc;
+                    ys.forEach(y => mm.forEach(i => {
+                        const d = c.m[i].days * sc; if (!d) return;
+                        const rq = RT.rateM(c.c, c.req, y, i), gv = RT.rateM(c.c, c.given, y, i);
                         if (c.kind === 'up') { t.gain += d * rq; t.diff += d * (gv - rq); }
                         else { t.gain += d * gv; t.diff += d * (rq - gv); }
-                    });
+                    }));
                 });
             });
             let cum = 0;
@@ -900,7 +920,7 @@ const app = createApp({
                     if (segT) for (const c in segC) { const a = A.get(c); if (!a) continue; const f = segC[c] / segT; a.cost += cost * f; a.sale += sale * f; }
                     let ft = 0; for (const c in pc.cf) ft += pc.cf[c];
                     if (ft) for (const c in pc.cf) { const a = A.get(c); if (a) a.pers += pers * pc.cf[c] / ft; }
-                    for (const k in pc.keys) { const [sg, c] = E.splitKey(k), a = A.get(c); if (a) a.revenue += pc.keys[k] * sc * RT.rate(c, sg, y); }
+                    (ms || ALL_MONTHS).forEach(i => { const pr = p.mPrice[i]; for (const k in pr) { const [sg, c] = E.splitKey(k), a = A.get(c); if (a) a.revenue += pr[k] * sc * RT.rateM(c, sg, y, i); } });
                 });
                 for (const c in pc.cf) { const a = A.get(c); if (a) a.files += pc.cf[c] * sc; }
             });
@@ -990,7 +1010,7 @@ const app = createApp({
                         const b = p.byYear[y];
                         work += Math.min(p.months[mi].occ, dim) * k; cap += dim * k; cost += (b.cost * fv + b.pers * fp) * dim / 365;
                         if (!X.cs) revenue += b.mRev[mi];
-                        else { const pr = p.mPrice[mi]; for (const key in pr) { const [sg, c] = E.splitKey(key); if (X.cs.has(c)) revenue += pr[key] * sc * RT.rate(c, sg, y); } }
+                        else revenue += this.revOf(p, [mi], X.cs, y);
                     });
                 });
                 if (!d.total && !work) continue;
@@ -1199,7 +1219,7 @@ const app = createApp({
             wrows.push([c('= Filo Neti', 'text-start fw-bold'), c(money(t.net), 'fw-bold ' + nc(t.net)), c(sh(t.net))]);
             if (this.hasSupplier) { wrows.push([c('+ Tedarikçi Marjı', 'text-start'), c(money(V.sup.margin), nc(V.sup.margin)), c(sh(V.sup.margin))]); wrows.push([c('= Şirket Neti', 'text-start fw-bold'), c(money(V.companyNet), 'fw-bold ' + nc(V.companyNet)), c(sh(V.companyNet))]); }
             B.push({ id: 'chWaterfall', title: 'Gelirden Net Sonuca', sub: 'Toplam gelirin hangi giderlerle azalarak net sonuca dönüştüğü. Yeşil: gelir, kırmızı: gider.',
-                insight: gelir ? `Her 100 ₺ gelirin ${f(t.net / gelir * 100)} ₺'si filo neti olarak kalıyor. En büyük gider kalemi: ${wf.slice(2).reduce((a, b) => (b[1] < a[1] ? b : a))[0]}.` : '',
+                insight: gelir ? `Her 100 ${this.curSym} gelirin ${f(t.net / gelir * 100)} ${this.curSym}'su filo neti olarak kalıyor. En büyük gider kalemi: ${wf.slice(2).reduce((a, b) => (b[1] < a[1] ? b : a))[0]}.` : '',
                 cols: ['Kalem', 'Tutar', 'Gelire Oranı'], rows: wrows });
             // 3. Gider yapısı
             const cats = V.catRows.filter(r => r.tutar > 0), bigC = cats[0];
@@ -1321,7 +1341,7 @@ const app = createApp({
                     return Object.assign(o, { 'Talep Segmenti': a.seg, 'Teslimat': E.formatDate(a.s), 'İade': E.formatDate(a.e), 'Gün': a.days,
                         'Durum': { own: 'Kendi segmenti', up: 'Üst segment', down: 'Alt segment' }[a.kind] || 'Karşılanamadı',
                         'Verilen Segment': a.given || '-', 'Plaka': p ? p.plate : '-', 'Araç': p ? p.model : '-',
-                        ['Gelir (' + y + ')']: a.unit ? a.days * R.rates.rate(a.c, ps, y) : 0 });
+                        ['Gelir (' + y + ', ' + this.curSym + ')']: a.unit ? a.days * R.rates.rateM(a.c, ps, y, a.mi) : 0 });
                 });
             }
             const V = this.view, out = [];
@@ -1454,6 +1474,33 @@ const app = createApp({
             });
             return o;
         },
+        /* Plakanın seçili aylarda, seçili müşterilerin dosyalarından geliri (Euro görünümünde teslimat ayının kuruyla) */
+        revOf(p, months, cs, y) {
+            const R = this.report, sc = R.scale || 1; let rev = 0;
+            months.forEach(i => { const pr = p.mPrice[i]; for (const k in pr) { const [sg, c] = E.splitKey(k); if (cs.has(c)) rev += pr[k] * sc * R.rates.rateM(c, sg, y, i); } });
+            return rev;
+        },
+        /* Para birimi (kişisel tercih, bu tarayıcıda saklanır) */
+        setCur(c) {
+            if (c === 'EUR' && !this.fx.ok) { this.notify(this.fx.missingYears.length ? this.fx.missingYears.join(', ') + ' yılı için kur girilmedi' : 'Önce Döviz Kuru sayfasından kur girin'); return; }
+            this.cur = c; try { localStorage.setItem(CUR_KEY, c); } catch (e) { /* yoksay */ }
+        },
+        /* Döviz kuru: başlangıç kuru ve aylık artış oranıyla tabloyu doldurur */
+        async fillKur() {
+            const start = Number(this.kurFill.start), pct = Number(this.kurFill.pct) || 0;
+            if (!(start > 0)) { this.notify('Başlangıç kurunu yazın'); return; }
+            const filled = this.years.some(y => (this.settings.kurlar[y] || []).some(v => v !== null && v !== ''));
+            if (filled && !await this.askConfirm(`Tablodaki tüm kurlar, Ocak ${this.years[0]} = ${start.toLocaleString('tr-TR')} ₺ ve aylık %${pct.toLocaleString('tr-TR')} artışla yeniden doldurulacak. Devam edilsin mi?`)) return;
+            let v = start;
+            this.years.forEach(y => { this.settings.kurlar[y] = this.settings.kurlar[y].map(() => { const x = Math.round(v * 100) / 100; v *= 1 + pct / 100; return x; }); });
+            this.notify('Kur tablosu dolduruldu');
+        },
+        async clearKur() {
+            if (!await this.askConfirm('Girilen tüm kurlar silinecek. Devam edilsin mi?')) return;
+            this.years.forEach(y => { this.settings.kurlar[y] = Array(12).fill(null); });
+            if (this.cur === 'EUR') this.setCur('TRY');
+        },
+        kurPlaceholder(y, m) { const v = this.fx.grid[y] && this.fx.grid[y][m]; return v > 0 ? '≈ ' + v.toLocaleString('tr-TR', { maximumFractionDigits: 2 }) : ''; },
         /* Karma dağıtım: seçili müşterilerin, plakanın segmentindeki kiralama günü payı (araç kalemleri için) */
         vShare(p, cs, A) { const t = A.segTot[p.seg]; if (!t) return 0; const o = A.segC[p.seg] || {}; let x = 0; for (const c in o) if (cs.has(c)) x += o[c]; return x / t; },
         /* Karma dağıtım: seçili müşterilerin plakadaki dosya payı (personel gideri için) */
@@ -1623,6 +1670,7 @@ const app = createApp({
             SEGMENTS.forEach(s => { delete this.settings.gunlukTutar[s][y]; delete this.settings.tedarikciTutar[s][y]; });
             Object.values(this.settings.musteriTutar || {}).forEach(m => ['gunluk', 'tedarikci'].forEach(k => SEGMENTS.forEach(sg => { if (m[k] && m[k][sg]) delete m[k][sg][y]; })));
             this.filters.year = this.filters.year.filter(x => String(x) !== String(y));
+            if (this.settings.kurlar) delete this.settings.kurlar[y];
         },
 
         toggleAllYears() {
@@ -1902,7 +1950,7 @@ const app = createApp({
         /* Başka bir senaryo / adet için rapor (kilit açıksa personel o filoya göre) */
         reportFor(sim, counts) {
             const files = E.adjustFiles(this.parsedFiles, sim.growth || 0);
-            const run = st => E.buildReport({ vehicles: this.vehicles, files, settings: st, cutHour: this.timeRule, sim, countsOverride: counts });
+            const run = st => E.buildReport({ vehicles: this.vehicles, files, settings: st, cutHour: this.timeRule, sim, countsOverride: counts, fx: this.fxArg });
             let R = run(this.settings);
             const pn = this.persFor(R.plates.length);
             if (pn !== (Number(this.settings.personelSayisi) || 0)) R = run({ ...this.settings, personelSayisi: pn });
@@ -1916,8 +1964,9 @@ const app = createApp({
             const counts = {}; this.vehicles.forEach(v => { counts[v.id] = v.count || 0; });
             const sim = { ...this.settings.sim, target: 'manual' }, all = () => true, g0 = Number(this.settings.sim.growth) || 0;
             const baseV = this.vehicles.map(v => ({ ...v, imageBase64: '' }));
-            const run = (st, vs, growth) => {
-                const R = E.buildReport({ vehicles: vs, files: E.adjustFiles(this.parsedFiles, growth), settings: st, cutHour: this.timeRule, sim, countsOverride: counts });
+            const fx0 = this.fxArg;
+            const run = (st, vs, growth, fx) => {
+                const R = E.buildReport({ vehicles: vs, files: E.adjustFiles(this.parsedFiles, growth), settings: st, cutHour: this.timeRule, sim, countsOverride: counts, fx: fx === undefined ? fx0 : fx });
                 return this.netOf(R) + this.supplierCalc(R, null, null, all, st).margin;
             };
             const scaleMap = (o, k) => Object.keys(o || {}).forEach(a => Object.keys(o[a] || {}).forEach(y => { const x = o[a][y]; if (x !== null && x !== '' && x !== undefined) o[a][y] = Number(x) * k; }));
@@ -1933,7 +1982,8 @@ const app = createApp({
                 ['Yakıt fiyatı', sMod((st, k) => scaleMap(st.yakitFiyatlari, k))],
                 ['Personel gideri', sMod((st, k) => st.personelTanimlari.forEach(h => { h.tutar = Number(h.tutar) * k; }))],
                 ['Enflasyon (±' + Math.round(p * 50) + ' puan)', k => { const st = clone(this.settings); const d = (k > 1 ? 1 : -1) * p * 50; Object.keys(st.enflasyonOranlari).forEach(y => { st.enflasyonOranlari[y] = Number(st.enflasyonOranlari[y]) + d; }); return [st, baseV, g0]; }],
-                ['Hizmet sayısı', k => [this.settings, baseV, g0 + (k > 1 ? 1 : -1) * p * 100]]
+                ['Hizmet sayısı', k => [this.settings, baseV, g0 + (k > 1 ? 1 : -1) * p * 100]],
+                ...(fx0 ? [['Euro kuru', k => [this.settings, baseV, g0, { ...fx0, K: (y, m) => fx0.K(y, m) * k, hk: y => fx0.hk(y) / k }]]] : [])
             ];
             const base = run(this.settings, baseV, g0);
             const rows = items.map(([label, fn]) => {
@@ -1986,12 +2036,18 @@ const app = createApp({
         },
         /* ---- Biçimlendirme ---- */
         formatCurrency(num) { return Number(num || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 }); },
-        money(num) { return '₺ ' + this.formatCurrency(num); },
+        money(num) {
+            const n = Number(num) || 0; // Euro'da küçük tutarlar (gün / dosya başı) kuruşlu gösterilir
+            if (this.isEur && Math.abs(n) < 1000 && n !== 0) return '€ ' + n.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            return this.curSym + ' ' + this.formatCurrency(n);
+        },
+        moneyTL(num) { return '₺ ' + this.formatCurrency(num); },
         shortMoney(num) {
             const n = Number(num) || 0, a = Math.abs(n), f = x => x.toLocaleString('tr-TR', { maximumFractionDigits: 1, minimumFractionDigits: 0 });
-            if (a >= 1e9) return '₺ ' + f(n / 1e9) + ' Mr';
-            if (a >= 1e6) return '₺ ' + f(n / 1e6) + ' Mn';
-            if (a >= 1e4) return '₺ ' + f(n / 1e3) + ' Bin';
+            const S = this.curSym + ' ';
+            if (a >= 1e9) return S + f(n / 1e9) + ' Mr';
+            if (a >= 1e6) return S + f(n / 1e6) + ' Mn';
+            if (a >= 1e4) return S + f(n / 1e3) + ' Bin';
             return this.money(n);
         },
         fmt1(n) { return (n || 0).toLocaleString('tr-TR', { maximumFractionDigits: 1 }); },
@@ -2070,7 +2126,7 @@ const app = createApp({
         exportDataset() {
             const ws = XLSX.utils.json_to_sheet(this.dsRows.map(r => { const o = {}; Object.keys(r).forEach(k => { o[k] = typeof r[k] === 'number' ? Math.round(r[k] * 100) / 100 : r[k]; }); return o; }));
             const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, this.ds.type === 'dosya' ? 'Dosya Detayı' : 'Plaka Detayı');
-            XLSX.writeFile(wb, `ikame_${this.ds.type === 'dosya' ? 'dosya' : 'plaka'}_detay.xlsx`);
+            XLSX.writeFile(wb, `ikame_${this.ds.type === 'dosya' ? 'dosya' : 'plaka'}_detay_${this.isEur ? 'EUR' : 'TL'}.xlsx`);
         },
         scheduleCharts() {
             clearTimeout(this._chartT);
