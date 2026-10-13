@@ -277,13 +277,19 @@
     /* Bir segmentin talebi, sınırsız araçla "en küçük sıradaki boş araca ver" kuralıyla dağıtılır.
        Bu kuralla ilk N aracın aldığı işler, filoda yalnızca N araç olsaydı alacaklarıyla aynıdır.
        Böylece tek geçişte her N için karşılanan dosya / çalışma günü bulunur. Dizi uzunluğu = pik eşzamanlı ihtiyaç. */
-    function fleetCurve(files, cutHour) {
+    /* SLA: dosyanın teslimat ayına göre beklenebilecek en uzun süre (saat). sla: 12 elemanlı dizi */
+    const slaMs = (sla, mi) => Math.max(0, num(sla && sla[mi])) * 3600000;
+    function fleetCurve(files, cutHour, sla) {
+        // SLA varken: dosya, SLA süresi içinde boşa çıkan en küçük sıradaki araca verilir (bu kural da "ilk N araç" özelliğini korur);
+        // gecikme kadar teslimat ve iade ileri kayar.
         const units = [];
         sortFiles(files).forEach(f => {
+            const w = slaMs(sla, new Date(f.s).getMonth());
             let u = null;
-            for (const x of units) if (x.freeAt <= f.s) { u = x; break; }
+            for (const x of units) if (x.freeAt <= f.s + w) { u = x; break; }
             if (!u) { u = { freeAt: 0, files: 0, days: 0 }; units.push(u); }
-            u.files++; u.days += rentDays(f.s, f.e); u.freeAt = freeAtOf(f.e, cutHour);
+            const d = Math.max(0, u.freeAt - f.s);
+            u.files++; u.days += rentDays(f.s, f.e); u.freeAt = freeAtOf(f.e + d, cutHour);
         });
         return units.map(u => ({ files: u.files, days: u.days }));
     }
@@ -304,13 +310,14 @@
         });
         const sorted = sortFiles(files);
         const segStats = {};
-        const blank = () => ({ total: 0, handled: 0, own: 0, up: 0, down: 0, days: 0 });
+        const blank = () => ({ total: 0, handled: 0, own: 0, up: 0, down: 0, days: 0, sla: 0, wait: 0 });
         const stat = seg => segStats[seg] || (segStats[seg] = { ...blank(), m: Array.from({ length: 12 }, blank), c: {} });
         const statC = (seg, c) => { const s = stat(seg); return s.c[c] || (s.c[c] = { ...blank(), m: Array.from({ length: 12 }, blank) }); };
         let minS = Infinity, maxE = -Infinity;
         const assign = sorted.map(f => {
             if (f.s < minS) minS = f.s; if (f.e > maxE) maxE = f.e;
-            const a = { no: f.no, seg: f.seg, c: f.c || '', s: f.s, e: f.e, fr: freeAtOf(f.e, cutHour), mi: new Date(f.s).getMonth(), days: rentDays(f.s, f.e), unit: null, given: null, kind: null };
+            const a = { no: f.no, seg: f.seg, c: f.c || '', s: f.s, e: f.e, fr: freeAtOf(f.e, cutHour), mi: new Date(f.s).getMonth(), days: rentDays(f.s, f.e), unit: null, given: null, kind: null, delay: 0 };
+            a.as = a.s; a.ae = a.e; a.afr = a.fr; // gerçekleşen teslimat / iade (SLA ile gecikirse kayar)
             const ss = stat(f.seg); ss.total++; ss.m[a.mi].total++;
             const sc = statC(f.seg, a.c); sc.total++; sc.m[a.mi].total++;
             return a;
@@ -321,12 +328,13 @@
             a.unit = st.id; a.given = st.seg; a.kind = kind;
             ss.handled++; ss.days += rd; ss[kind]++; sm.handled++; sm.days += rd; sm[kind]++;
             sc.handled++; sc.days += rd; sc[kind]++; scm.handled++; scm.days += rd; scm[kind]++;
+            if (a.delay > 0) { const h = a.delay / 3600000; ss.sla++; ss.wait += h; sm.sla++; sm.wait += h; sc.sla++; sc.wait += h; scm.sla++; scm.wait += h; }
             st.files++; st.days += rd; st.price[pk] = (st.price[pk] || 0) + rd;
             // Doluluk için kiralama günleri takvimdeki gerçek aylarına bölüştürülür (ay sonuna taşan kiralama)
-            if (a.e > a.s) {
-                let t = a.s; const tot = a.e - a.s;
-                while (t < a.e) { const d = new Date(t), nx = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime(), e2 = Math.min(a.e, nx); st.occ[d.getMonth()] += rd * (e2 - t) / tot; t = e2; }
-            } else st.occ[a.mi] += rd;
+            if (a.ae > a.as) { // gerçekleşen (SLA ile kaymış olabilir) kiralama takvimi
+                let t = a.as; const tot = a.ae - a.as;
+                while (t < a.ae) { const d = new Date(t), nx = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime(), e2 = Math.min(a.ae, nx); st.occ[d.getMonth()] += rd * (e2 - t) / tot; t = e2; }
+            } else st.occ[new Date(a.as).getMonth()] += rd;
             const bm = st.m[a.mi]; bm.files++; bm.days += rd; bm.price[pk] = (bm.price[pk] || 0) + rd; bm.cf[a.c] = (bm.cf[a.c] || 0) + 1;
             if (kind !== 'own') {
                 const key = kind + '|' + a.seg + '|' + st.seg + '|' + a.c;
@@ -334,10 +342,18 @@
                 c.files++; c.days += rd; c.m[a.mi].files++; c.m[a.mi].days += rd;
             }
         };
-        // 1. aşama: kendi segmenti
+        // 1. aşama: kendi segmenti. Teslimat anında boş araç yoksa, teslimat ayının SLA süresi içinde ilk boşa çıkan araç beklenir;
+        // dosya o anda verilir, iade de gecikme kadar kayar (kiralama süresi ve gelir değişmez).
         assign.forEach(a => {
             const pool = pools[a.seg]; if (!pool) return;
-            for (const st of pool) if (st.freeAt <= a.s) { book(a, st, 'own'); st.iv.push([a.s, a.fr]); st.freeAt = a.fr; break; }
+            let pick = null;
+            for (const st of pool) if (st.freeAt <= a.s) { pick = st; break; }
+            if (!pick) {
+                const w = slaMs(opts.sla, a.mi);
+                if (w > 0) for (const st of pool) if (st.freeAt <= a.s + w && (!pick || st.freeAt < pick.freeAt)) pick = st;
+                if (pick) { a.delay = pick.freeAt - a.s; a.as = a.s + a.delay; a.ae = a.e + a.delay; a.afr = freeAtOf(a.ae, cutHour); }
+            }
+            if (pick) { book(a, pick, 'own'); pick.iv.push([a.as, a.afr]); pick.freeAt = a.afr; }
         });
         // 2. aşama: üst / alt segment (yalnızca boş zaman aralıklarına)
         if (opts.up || opts.down) {
@@ -358,7 +374,7 @@
                     const pool = pools[sg]; if (!pool) continue;
                     for (const st of pool) {
                         const at = fits(st.iv, a.s, a.fr);
-                        if (at >= 0) { book(a, st, kd); st.iv.splice(at, 0, [a.s, a.fr]); return; }
+                        if (at >= 0) { book(a, st, kd); st.iv.splice(at, 0, [a.as, a.afr]); return; }
                     }
                 }
             });
@@ -525,7 +541,7 @@
         const allSegs = [...new Set([...SEGMENTS, ...Object.keys(bySeg)])];
         allSegs.forEach(seg => {
             const demand = bySeg[seg] || [], models = segModels[seg] || [];
-            const curve = demand.length ? fleetCurve(demand, cutHour) : [];
+            const curve = demand.length ? fleetCurve(demand, cutHour, settings.sla) : [];
             const existing = [];
             models.forEach(v => { for (let n = 0; n < baseCount(v); n++) existing.push(v); });
             const cheapest = models[0] || null, E0 = existing.length;
@@ -600,7 +616,7 @@
         allSegs.forEach(seg => (segModels[seg] || []).forEach(v => {
             for (let n = 0; n < (counts[v.id] || 0); n++) units.push({ id: v.id + ':' + n, plate: plateFor(vIndex(v), n), seg, v });
         }));
-        const sim = simulate(files, units, cutHour, { up: !!simOpt.up, down: !!simOpt.down });
+        const sim = simulate(files, units, cutHour, { up: !!simOpt.up, down: !!simOpt.down, sla: settings.sla });
 
         const missingRates = new Set(), unsold = new Set();
         const revOf = (price, y) => Object.keys(price).reduce((a, k) => {

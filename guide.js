@@ -136,6 +136,23 @@ window.GUIDE = [
         ]
     },
     {
+        id: 'sla', title: 'SLA (Teslimat Süresi)', icon: 'bi-hourglass-split',
+        intro: 'Teslimat anında boş araç olmayan dosyanın en fazla kaç saat bekleyip kendi filomuzla karşılanabileceği, teslimat ayına göre (Ocak–Aralık) belirlenir. Tüm tahmin yıllarına aynı uygulanır.',
+        sections: [
+            { h: 'Kural', items: [
+                'Önce dosyanın teslimat anında kendi segmentinde boş araç aranır. Yoksa ve o ayın SLA süresi 0\'dan büyükse, bu süre içinde ilk boşa çıkan araç beklenir; dosya aracın boşa çıktığı anda verilir.',
+                'Gecikmeli teslimatta iade de aynı süre kadar kayar: kiralama süresi ve gelir değişmez, araç o kadar geç boşa çıkar.',
+                'SLA içinde de araç yoksa üst / alt segment seçenekleri (açıksa) denenir; o da yoksa dosya karşılanamaz. 00:00:00 seçilen ayda eski kural geçerlidir.',
+                'Örnek: Ocak için 24:00:00 seçildiyse 10 Ocak 14:00 teslimatlı dosya, 11 Ocak 14:00\'e kadar boşa çıkan bir araçla karşılanabilir.'
+            ] },
+            { h: 'Etkisi', items: [
+                'Karşılanan dosya ve filo doluluğu artar; %100 karşılama için gereken araç sayısı ve hedef karşılama oranlarındaki araç sayıları da SLA dikkate alınarak hesaplanır.',
+                'Simülatörde "SLA (Gecikmeli Teslimat)" kartları, Raporlama\'da aylık grafikte "SLA ile (bekleyerek)" sarı dilimi ve veri setinde bekleme süresi gösterilir.',
+                '"Kış 24 / Yaz 48" kısayolu Haziran–Eylül için 48, diğer aylar için 24 saat uygular; "Tüm aylara uygula" tek süreyi 12 aya yazar.'
+            ] }
+        ]
+    },
+    {
         id: 'iadeSaati', title: 'İade Dönüş Saati', icon: 'bi-clock-history',
         intro: 'İade edilen aracın aynı gün yeni dosyaya verilip verilemeyeceğini belirler.',
         sections: [

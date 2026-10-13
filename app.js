@@ -16,7 +16,8 @@ const NO_CUST = ''; // müşteri bilgisi olmayan dosyalar
 const NO_CUST_LABEL = 'Müşterisi belirtilmemiş';
 const rateKey = c => c || E.NONE_KEY; // müşteri tutar tablosundaki anahtar
 const custLabel = c => c || NO_CUST_LABEL;
-const STAT_KEYS = ['total', 'handled', 'own', 'up', 'down', 'days'];
+const STAT_KEYS = ['total', 'handled', 'own', 'up', 'down', 'days', 'sla', 'wait'];
+const SLA_HOURS = Array.from({ length: 73 }, (_, h) => h); // 00:00:00 … 72:00:00
 const ALL_MONTHS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 const OUTPUT_TABS = ['tahminleme', 'raporlama', 'gunlukTutar']; // Euro seçimi yalnızca sonuç ekranlarını etkiler; giriş sayfaları her zaman TL
 const CUR_KEY = 'eurocross_ikame_para_birimi';
@@ -67,6 +68,7 @@ function defaultSettings() {
         tedarikciTutar: {},
         musteriTutar: {},
         kurlar: {}, // { yıl: [12 ay] } 1 € = ? ₺
+        sla: Array(12).fill(0), // ay bazında teslimatta beklenebilecek en uzun süre (saat)
         sim: DEFAULT_SIM(),
         scenarios: []
     };
@@ -106,6 +108,7 @@ function normalizeSettings(s) {
     // Müşteri bazlı günlük tutarlar: { müşteri: { gunluk: {seg: {yıl}}, tedarikci: {seg: {yıl}} } }
     s.musteriTutar = s.musteriTutar && typeof s.musteriTutar === 'object' && !Array.isArray(s.musteriTutar) ? s.musteriTutar : {};
     Object.keys(s.musteriTutar).forEach(c => fillCustRates(s.musteriTutar[c] = s.musteriTutar[c] || {}, s.enflasyonYillari));
+    s.sla = Array.from({ length: 12 }, (_, m) => { const v = Number(Array.isArray(s.sla) ? s.sla[m] : 0); return v >= 0 && v <= 72 ? Math.round(v) : 0; });
     s.kurlar = s.kurlar && typeof s.kurlar === 'object' ? s.kurlar : {};
     s.enflasyonYillari.forEach(y => { const r = Array.isArray(s.kurlar[y]) ? s.kurlar[y] : []; s.kurlar[y] = Array.from({ length: 12 }, (_, m) => (r[m] === undefined || r[m] === '' ? null : r[m])); });
     s.sim = { ...DEFAULT_SIM(), ...(s.sim || {}) };
@@ -293,6 +296,7 @@ const PAGE_META = {
     yakitVeEnflasyon: ['Yakıt & Enflasyon', 'Tahminleme yıllarını, enflasyon oranlarını ve yakıt fiyatlarını girin.'],
     tarihce: ['Tarihçe (Dosyalar)', 'Simülasyonun dayandığı dosya teslim / iade verisini yükleyin.'],
     iadeSaati: ['İade Dönüş Saati', 'Geç iade edilen aracın ertesi güne kalacağı saat sınırını belirleyin.'],
+    sla: ['SLA (Teslimat Süresi)', 'Teslimat anında boş araç yoksa, dosyanın en fazla kaç saat bekleyip kendi filomuzla karşılanabileceğini ay bazında belirleyin.'],
     gunlukTutar: ['Günlük Tutar', 'Müşteri, segment ve yıla göre Eurocross Turkey günlük tutarı; girilen tutarla gelir, gider, kârlılık ve başabaş tahmini.'],
     kur: ['Döviz Kuru', 'Tahminleme yıllarının aylık Euro kurunu girin (1 € = ? ₺). Euro görünümünde her tutar, paranın el değiştirdiği ayın kuruyla çevrilir.'],
     rehber: ['Çalışma Rehberi', 'Her sayfanın başlıkları ne işe yarar, hesaplar hangi mantıkla yapılır.']
@@ -311,6 +315,7 @@ const app = createApp({
                 { id: 'kur', label: 'Döviz Kuru', icon: 'bi-currency-euro' },
                 { id: 'tarihce', label: 'Tarihçe (Dosyalar)', icon: 'bi-file-earmark-spreadsheet' },
                 { id: 'iadeSaati', label: 'İade Dönüş Saati', icon: 'bi-clock-history' },
+                { id: 'sla', label: 'SLA', icon: 'bi-hourglass-split' },
                 { id: 'gunlukTutar', label: 'Günlük Tutar', icon: 'bi-cash-coin' }
             ],
             segments: SEGMENTS,
@@ -351,7 +356,7 @@ const app = createApp({
             // Günlük Tutar: seçili müşteri ve kopyalama kaynağı
             gtCust: null, gtCopyFrom: null, gtSel: { sg: null, y: null }, gtOpen: {},
             cur: (() => { try { return localStorage.getItem(CUR_KEY) === 'EUR' ? 'EUR' : 'TRY'; } catch (e) { return 'TRY'; } })(),
-            kurFill: { start: null, pct: 1.5 },
+            kurFill: { start: null, pct: 1.5 }, slaHours: SLA_HOURS, slaAll: 24,
             sensP: 10, sensData: null, sensBusy: false, margData: {}, margBusy: false,
             ds: { type: 'dosya', status: 'all', search: '', page: 1, size: 50 }
         };
@@ -363,6 +368,16 @@ const app = createApp({
         /* Euro görünümü: seçim Euro ise, tüm yıllarda en az bir kur girilmişse ve sonuç ekranındaysa */
         isEur() { return this.cur === 'EUR' && this.fx.ok && OUTPUT_TABS.includes(this.activeTab); },
         fxArg() { return this.isEur ? this.fx : null; },
+        slaActive() { return (this.settings.sla || []).some(h => Number(h) > 0); },
+        /* SLA sayfası: ay bazında talep, hemen / SLA ile karşılanan ve ortalama bekleme (mevcut filo ile) */
+        slaMonths() {
+            const st = this.report.sim.segStats, sc = this.report.scale || 1;
+            return MONTHS.map((m, i) => {
+                const t = { total: 0, handled: 0, sla: 0, wait: 0 };
+                Object.values(st).forEach(s => { const x = s.m[i]; t.total += x.total; t.handled += x.handled; t.sla += x.sla; t.wait += x.wait; });
+                return { m, i, ...t, missed: t.total - t.handled, avg: t.sla ? t.wait / t.sla : 0, ratio: t.total ? t.handled / t.total * 100 : 0 };
+            });
+        },
         curSym() { return this.isEur ? '€' : '₺'; },
         syncLabel() {
             if (this.sync.status === 'local') return 'Yerel mod (bulut kapalı)';
@@ -641,7 +656,8 @@ const app = createApp({
                 tarihce: this.historicalData.length > 0,
                 iadeSaati: true,
                 gunlukTutar: this.rateCustomers.length > 0 && !this.custMissingOwn.length,
-                kur: this.fx.ok
+                kur: this.fx.ok,
+                sla: true
             };
         },
 
@@ -841,7 +857,8 @@ const app = createApp({
             const demand = segKeys.reduce((a, k) => a + sStat(k).total, 0);
             const handled = X.vset ? Math.round(plateRows.reduce((a, r) => a + r.files1, 0)) : segKeys.reduce((a, k) => a + sStat(k).handled, 0);
             const rentalDays = segKeys.reduce((a, k) => a + sStat(k).days, 0), simHandled = segKeys.reduce((a, k) => a + sStat(k).handled, 0);
-            const files = { total: demand, handled, missed: Math.max(0, demand - handled), ratio: demand ? handled / demand * 100 : 0 };
+            const slaN = segKeys.reduce((a, k) => a + sStat(k).sla, 0), slaH = segKeys.reduce((a, k) => a + sStat(k).wait, 0);
+            const files = { total: demand, handled, missed: Math.max(0, demand - handled), ratio: demand ? handled / demand * 100 : 0, sla: slaN, avgWait: slaN ? slaH / slaN : 0 };
             const order = k => { const i = SEGMENTS.indexOf(k); return i < 0 ? 99 : i; };
             const CC = this.custCurve;
             const curveOf = k => {
@@ -1029,8 +1046,8 @@ const app = createApp({
             R.sim.assign.forEach(a => {
                 if (a.s < lo) lo = a.s; if (a.e > hi) hi = a.e;
                 const p = a.unit ? plate[a.unit] : null; if (!p || !X.segOk(p) || !X.cOk(a.c)) return;
-                if (X.mOk(a.mi)) { const k = day(a.s); del[k] = (del[k] || 0) + 1; }
-                if (X.mOk(new Date(a.e).getMonth())) { const k = day(a.e); ret[k] = (ret[k] || 0) + 1; }
+                if (X.mOk(new Date(a.as).getMonth())) { const k = day(a.as); del[k] = (del[k] || 0) + 1; } // gerçekleşen teslimat (SLA ile kaymış olabilir)
+                if (X.mOk(new Date(a.ae).getMonth())) { const k = day(a.ae); ret[k] = (ret[k] || 0) + 1; }
             });
             const out = { max: { total: 0, del: 0, ret: 0, date: '-' }, min: { total: 0, del: 0, ret: 0, date: '-' }, avgTotal: 0, avgDel: 0, avgRet: 0, maxDel: 0, maxRet: 0, perAvg: 0, perMax: 0, days: 0 };
             if (lo === Infinity) return out;
@@ -1068,8 +1085,8 @@ const app = createApp({
         monthly() {
             const R = this.report, V = this.view, X = this.fctx, st = R.sim.segStats;
             return MONTHS.map((m, i) => {
-                const t = { total: 0, own: 0, up: 0, down: 0, handled: 0 };
-                V.segKeys.forEach(k => { const x = this.statOf(st[k], [i], X.cs); t.total += x.total; t.own += x.own; t.up += x.up; t.down += x.down; t.handled += x.handled; });
+                const t = { total: 0, own: 0, up: 0, down: 0, handled: 0, sla: 0 };
+                V.segKeys.forEach(k => { const x = this.statOf(st[k], [i], X.cs); t.total += x.total; t.own += x.own; t.up += x.up; t.down += x.down; t.handled += x.handled; t.sla += x.sla; });
                 return { m, ...t, missed: t.total - t.handled, util: V.monthCap[i] && t.total ? V.monthWork[i] / V.monthCap[i] * 100 : null };
             });
         },
@@ -1087,7 +1104,7 @@ const app = createApp({
         dailyLoad() {
             const list = this.assignFiltered;
             const dem = E.dailyPeaks(list.map(a => [a.s, a.fr]));
-            const used = E.dailyPeaks(list.filter(a => a.unit).map(a => [a.s, a.fr]));
+            const used = E.dailyPeaks(list.filter(a => a.unit).map(a => [a.as, a.afr]));
             const off = dem.start !== null && used.start !== null ? Math.round((used.start - dem.start) / 86400000) : 0;
             const days = dem.peaks.map((d, i) => ({ t: dem.start + i * 86400000, demand: d, used: used.peaks[i - off] || 0 }));
             return { days, fleet: this.view.fleetIn };
@@ -1152,7 +1169,9 @@ const app = createApp({
                 'Personel Gideri': `Personel başlıklarının kişi başı yıllık tutarı × çalıştırılacak personel sayısı; enflasyonla artar.\nFilo geneli sabit gider olarak, o yıl aktif araçlara aldıkları dosya oranında dağıtılır.\nToplam: ${m(t.pers)}`,
                 'Net Kâr / Zarar': `Araç satış geliri + dosya geliri − işletme − alış − faiz − personel\n= ${sm(t.sale)} + ${sm(t.revenue)} − ${sm(t.op)} − ${sm(t.buy)} − ${sm(t.int)} − ${sm(t.pers)}\n= ${m(t.net)}`,
                 'Filo Doluluk Oranı': `Çalışılan gün ÷ (çalışılan + boşta gün).\nHer plaka dönem boyunca ${R.period} gün sayılır (tarihçe 1 yıllıksa 365).\n${f(t.work)} ÷ ${f(t.work + t.idle)} = ${pc(V.util)}`,
-                'Karşılanan Dosya': `Talep: tarihçedeki dosya sayısı (seçili segment / ay).\nKarşılanan: araç verilebilen dosyalar (kendi segmenti + açıksa üst/alt segment).\nDosya, teslim anında boşta olan, segmentindeki en düşük giderli araca verilir; iade saati sınırından sonra dönen araç ertesi gün boşa çıkar.\n${f(fs.handled)} / ${f(fs.total)}`,
+                'SLA ile Karşılanan': `Teslimat anında kendi segmentinde boş araç olmayan, ama teslimat ayının SLA süresi içinde boşa çıkan araçla karşılanan dosyalar.\nDosya, aracın boşa çıktığı anda verilir; iade de aynı süre kadar kayar (kiralama süresi ve gelir değişmez).\n${f(V.files.sla)} dosya · karşılananların ${pc(fs.handled ? V.files.sla / fs.handled * 100 : 0)}'i`,
+                'Ortalama Bekleme': `SLA ile karşılanan dosyaların, talep edilen teslimat saatinden aracın verildiği saate kadar ortalama bekleme süresi.\n${this.fmt1(V.files.avgWait)} saat`,
+                'Karşılanan Dosya': `Talep: tarihçedeki dosya sayısı (seçili segment / ay).\nKarşılanan: araç verilebilen dosyalar (kendi segmenti + açıksa üst/alt segment).\nDosya, teslim anında boşta olan, segmentindeki en düşük giderli araca verilir; iade saati sınırından sonra dönen araç ertesi gün boşa çıkar.\nSLA: teslim anında boş araç yoksa, teslimat ayının SLA süresi içinde ilk boşa çıkan araç beklenir; o süre içinde de araç yoksa dosya karşılanamaz.\n${f(fs.handled)} / ${f(fs.total)}`,
                 'Karşılanan Dosya Oranı': `Karşılanan dosya ÷ talep edilen dosya.\n${f(fs.handled)} ÷ ${f(fs.total)} = ${pc(fs.ratio)}`,
                 'Araç Sayısı': `Simülasyondaki plaka sayısı (araç kartlarındaki adetlerin toplamı).\nHiç dosya almayan: dönem boyunca bir kez bile kiralanmayan plaka.`,
                 'En Yoğun Gün': `Kendi filomuzla yapılan teslimat (dosya başlangıcı) + iade (dosya bitişi) işlemlerinin en fazla olduğu gün.\nKendi filomuzla karşılanamayan dosyalar dahil değildir. Segment / marka / ay filtresi uygulanır.`,
@@ -1207,11 +1226,11 @@ const app = createApp({
             const mo = this.monthly.filter(m => m.total), rt = m => (m.total ? m.handled / m.total * 100 : 0);
             const top = mo.length ? mo.reduce((a, b) => (b.total > a.total ? b : a)) : null, low = mo.length ? mo.reduce((a, b) => (rt(b) < rt(a) ? b : a)) : null;
             const tm = mo.reduce((a, m) => ({ total: a.total + m.total, handled: a.handled + m.handled, cross: a.cross + m.up + m.down, missed: a.missed + m.missed }), { total: 0, handled: 0, cross: 0, missed: 0 });
-            B.push({ id: 'chMonthly', title: 'Aylık Talep ve Karşılama', sub: 'Her ay gelen dosyaların ne kadarına kendi filomuzla araç verebildik? Turuncu: karşılanan, gri: karşılanamayan. Çizgi aylık filo doluluğu.',
+            B.push({ id: 'chMonthly', title: 'Aylık Talep ve Karşılama', sub: 'Her ay gelen dosyaların ne kadarına kendi filomuzla araç verebildik? Turuncu: hemen karşılanan' + (this.slaActive ? ', sarı: SLA süresi içinde bekleyip karşılanan' : '') + ', gri: karşılanamayan. Çizgi aylık filo doluluğu.',
                 insight: top ? `En yoğun ay ${top.m} (${f(top.total)} dosya). En düşük karşılama ${low.m} ayında: ${pc(rt(low))}.` : '',
-                cols: ['Ay', 'Talep', 'Karşılanan', 'Üst/Alt Seg.', 'Karşılanamayan', 'Karşılama', 'Doluluk'],
-                rows: mo.map(m => [c(m.m, 'text-start fw-bold'), c(f(m.total)), c(f(m.handled)), c(f(m.up + m.down)), c(f(m.missed), m.missed ? 'text-danger' : ''), c(pc(rt(m)), this.ratioClass(rt(m))), c(m.util === null ? '-' : pc(m.util))]),
-                foot: [c('Toplam', 'text-start'), c(f(tm.total)), c(f(tm.handled)), c(f(tm.cross)), c(f(tm.missed)), c(pc(tm.total ? tm.handled / tm.total * 100 : 0)), c(pc(V.util))] });
+                cols: this.slaActive ? ['Ay', 'Talep', 'Karşılanan', 'SLA ile', 'Üst/Alt Seg.', 'Karşılanamayan', 'Karşılama', 'Doluluk'] : ['Ay', 'Talep', 'Karşılanan', 'Üst/Alt Seg.', 'Karşılanamayan', 'Karşılama', 'Doluluk'],
+                rows: mo.map(m => [c(m.m, 'text-start fw-bold'), c(f(m.total)), c(f(m.handled)), ...(this.slaActive ? [c(f(m.sla))] : []), c(f(m.up + m.down)), c(f(m.missed), m.missed ? 'text-danger' : ''), c(pc(rt(m)), this.ratioClass(rt(m))), c(m.util === null ? '-' : pc(m.util))]),
+                foot: [c('Toplam', 'text-start'), c(f(tm.total)), c(f(tm.handled)), ...(this.slaActive ? [c(f(mo.reduce((a, m) => a + m.sla, 0)))] : []), c(f(tm.cross)), c(f(tm.missed)), c(pc(tm.total ? tm.handled / tm.total * 100 : 0)), c(pc(V.util))] });
             // 2. Gelirden net sonuca
             const t = V.total, gelir = t.revenue + t.sale, sh = x => pc(gelir ? x / gelir * 100 : 0);
             const wf = [['Dosya Geliri', t.revenue, '+'], ['Araç Satış Geliri', t.sale, '+'], ['Araç İşletme Gideri', -t.op, '−'], ['Alış Gideri', -t.buy, '−'], ['Faiz Gideri', -t.int, '−'], ['Personel Gideri', -t.pers, '−']];
@@ -1339,6 +1358,7 @@ const app = createApp({
                     const o = { 'Dosya No': a.no };
                     if (cu) o['Müşteri'] = a.c || NO_CUST_LABEL;
                     return Object.assign(o, { 'Talep Segmenti': a.seg, 'Teslimat': E.formatDate(a.s), 'İade': E.formatDate(a.e), 'Gün': a.days,
+                        ...(this.slaActive ? { 'Bekleme (saat)': a.unit ? Math.round(a.delay / 360000) / 10 : 0, 'Gerçek Teslimat': a.unit ? E.formatDate(a.as) : '-' } : {}),
                         'Durum': { own: 'Kendi segmenti', up: 'Üst segment', down: 'Alt segment' }[a.kind] || 'Karşılanamadı',
                         'Verilen Segment': a.given || '-', 'Plaka': p ? p.plate : '-', 'Araç': p ? p.model : '-',
                         ['Gelir (' + y + ', ' + this.curSym + ')']: a.unit ? a.days * R.rates.rateM(a.c, ps, y, a.mi) : 0 });
@@ -1466,7 +1486,7 @@ const app = createApp({
         hideTip() { this.tip.show = false; },
         /* Segment istatistiğini seçili aylar (ms) ve müşteriler (cs) için toplar */
         statOf(s, ms, cs) {
-            const o = { total: 0, handled: 0, own: 0, up: 0, down: 0, days: 0 }; if (!s) return o;
+            const o = {}; STAT_KEYS.forEach(q => { o[q] = 0; }); if (!s) return o;
             const srcs = cs ? [...cs].map(c => s.c && s.c[c]).filter(Boolean) : [s];
             srcs.forEach(x => {
                 if (!ms) STAT_KEYS.forEach(q => { o[q] += x[q]; });
@@ -1500,6 +1520,9 @@ const app = createApp({
             this.years.forEach(y => { this.settings.kurlar[y] = Array(12).fill(null); });
             if (this.cur === 'EUR') this.setCur('TRY');
         },
+        fmtSla(h) { return String(h).padStart(2, '0') + ':00:00'; },
+        applySlaAll() { this.settings.sla = Array(12).fill(Number(this.slaAll) || 0); this.notify('Tüm aylara ' + this.fmtSla(this.slaAll) + ' uygulandı'); },
+        applySlaPreset() { this.settings.sla = MONTHS.map((m, i) => (i >= 5 && i <= 8 ? 48 : 24)); this.notify('Kış 24 saat, yaz (Haziran–Eylül) 48 saat uygulandı'); },
         kurPlaceholder(y, m) { const v = this.fx.grid[y] && this.fx.grid[y][m]; return v > 0 ? '≈ ' + v.toLocaleString('tr-TR', { maximumFractionDigits: 2 }) : ''; },
         /* Karma dağıtım: seçili müşterilerin, plakanın segmentindeki kiralama günü payı (araç kalemleri için) */
         vShare(p, cs, A) { const t = A.segTot[p.seg]; if (!t) return 0; const o = A.segC[p.seg] || {}; let x = 0; for (const c in o) if (cs.has(c)) x += o[c]; return x / t; },
@@ -2152,7 +2175,8 @@ const app = createApp({
             const tipMoney = { callbacks: { label: c => `${c.dataset.label ? c.dataset.label + ': ' : ''}${this.money(c.parsed.y !== undefined ? c.parsed.y : c.parsed)}` } };
             // 1. Aylık talep ve karşılama
             this.chart('chMonthly', { data: { labels: M.map(m => m.m.slice(0, 3)), datasets: [
-                { type: 'bar', label: 'Kendi segmenti', data: M.map(m => m.own), backgroundColor: C.orange, stack: 's' },
+                { type: 'bar', label: 'Kendi segmenti', data: M.map(m => m.own - m.sla), backgroundColor: C.orange, stack: 's' },
+                ...(this.slaActive ? [{ type: 'bar', label: 'SLA ile (bekleyerek)', data: M.map(m => m.sla), backgroundColor: C.amber, stack: 's' }] : []),
                 { type: 'bar', label: 'Üst segment', data: M.map(m => m.up), backgroundColor: C.blue, stack: 's' },
                 { type: 'bar', label: 'Alt segment', data: M.map(m => m.down), backgroundColor: C.purple, stack: 's' },
                 { type: 'bar', label: 'Karşılanamayan', data: M.map(m => m.missed), backgroundColor: '#dee2e6', stack: 's' },

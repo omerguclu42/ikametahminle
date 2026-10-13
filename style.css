@@ -421,3 +421,7 @@ tr.cursor-pointer:hover { background: #fff4ec; }
 .kur-rules li { margin-bottom: 4px; }
 .eur-banner { background: #eef6ff; border-color: #cfe2ff; }
 @media print { .cur-box { display: none !important; } }
+
+/* SLA */
+.sla-table select.sla-on { border-color: #f59f00; background-color: #fff9db; font-weight: 600; }
+.sla-table th, .sla-table td { white-space: nowrap; }

@@ -429,6 +429,66 @@
                 </div>
             </div>
 
+            <!-- ================= SLA ================= -->
+            <div v-if="activeTab === 'sla'">
+                <div class="row g-4">
+                    <div class="col-xxl-8">
+                        <div class="card shadow-sm border-0">
+                            <div class="card-header bg-white d-flex flex-wrap gap-2 align-items-center">
+                                <h5 class="mb-0 me-auto">Aylık SLA Süresi</h5>
+                                <div class="input-group input-group-sm w-auto">
+                                    <select class="form-select" v-model.number="slaAll"><option v-for="h in slaHours" :key="h" :value="h">{{ fmtSla(h) }}</option></select>
+                                    <button class="btn btn-outline-orange" @click="applySlaAll">Tüm aylara uygula</button>
+                                </div>
+                                <button class="btn btn-sm btn-outline-secondary" @click="applySlaPreset" title="Ekim–Mayıs 24 saat, Haziran–Eylül 48 saat"><i class="bi bi-sun"></i> Kış 24 / Yaz 48</button>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive"><table class="table table-sm align-middle mb-0 sla-table">
+                                    <thead class="table-light"><tr><th>Teslimat Ayı</th><th style="min-width:125px">SLA Süresi</th><th class="text-end">Talep</th><th class="text-end">Hemen</th><th class="text-end">SLA ile</th><th class="text-end">Ort. Bekleme</th><th class="text-end">Kaçan</th><th class="text-end">Karşılama</th></tr></thead>
+                                    <tbody>
+                                        <tr v-for="r in slaMonths" :key="r.i">
+                                            <th>{{ r.m }}</th>
+                                            <td><select class="form-select form-select-sm" v-model.number="settings.sla[r.i]" :class="{'sla-on': settings.sla[r.i] > 0}">
+                                                <option v-for="h in slaHours" :key="h" :value="h">{{ fmtSla(h) }}</option></select></td>
+                                            <td class="text-end">{{ formatCurrency(r.total) }}</td>
+                                            <td class="text-end">{{ formatCurrency(r.handled - r.sla) }}</td>
+                                            <td class="text-end" :class="r.sla ? 'text-warn fw-bold' : 'text-muted'">{{ formatCurrency(r.sla) }}</td>
+                                            <td class="text-end">{{ r.sla ? fmt1(r.avg) + ' sa' : '-' }}</td>
+                                            <td class="text-end" :class="r.missed ? 'text-danger' : ''">{{ formatCurrency(r.missed) }}</td>
+                                            <td class="text-end fw-bold" :class="ratioClass(r.ratio)">{{ pct(r.ratio) }}</td>
+                                        </tr>
+                                    </tbody>
+                                </table></div>
+                                <div class="small text-muted mt-2">Talep / karşılama sütunları, Tahminleme Simülatörü'ndeki mevcut filo ve ayarlarla anlık hesaplanır; SLA süresini değiştirince hemen güncellenir. Ay, dosyanın teslimat tarihinin ayıdır.</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xxl-4">
+                        <div class="card shadow-sm border-0 mb-4">
+                            <div class="card-header bg-white"><h6 class="mb-0 text-orange">SLA nasıl çalışır?</h6></div>
+                            <div class="card-body small">
+                                <ul class="ps-3 mb-0 kur-rules">
+                                    <li>Dosyanın teslimat anında kendi segmentinde boş araç varsa, dosya hemen o araca verilir (değişiklik yok).</li>
+                                    <li>Boş araç yoksa ve teslimat ayının SLA süresi 0'dan büyükse, bu süre içinde <b>ilk boşa çıkan</b> araç beklenir; dosya aracın boşa çıktığı anda verilir.</li>
+                                    <li>Gecikmeli teslimatta <b>iade de aynı süre kadar kayar</b>: kiralama süresi ve gelir değişmez, araç o kadar geç boşa çıkar.</li>
+                                    <li>SLA süresi içinde de araç boşa çıkmazsa ve üst / alt segment seçenekleri açıksa, o segmentlerin o an boş araçları denenir; o da yoksa dosya karşılanamaz.</li>
+                                    <li>İade saati kuralı geçerlidir: sınır saatinden sonra dönen araç ertesi gün 00:00'da boşa çıkar.</li>
+                                    <li>00:00:00 seçilen ayda eski kural uygulanır: o an boş araç yoksa dosya kaçar.</li>
+                                </ul>
+                            </div>
+                        </div>
+                        <div class="card shadow-sm border-0" v-if="report.plates.length">
+                            <div class="card-body">
+                                <div class="row g-3">
+                                    <div class="col-6"><div class="kpi kpi-sm"><div class="kpi-l">SLA ile Karşılanan</div><div class="kpi-v text-warn">{{ formatCurrency(slaMonths.reduce((a, r) => a + r.sla, 0)) }}</div><div class="kpi-s">dosya, tüm aylar</div></div></div>
+                                    <div class="col-6"><div class="kpi kpi-sm"><div class="kpi-l">Karşılama Oranı</div><div class="kpi-v" :class="ratioClass(slaMonths.reduce((a, r) => a + r.handled, 0) / Math.max(1, slaMonths.reduce((a, r) => a + r.total, 0)) * 100)">{{ pct(slaMonths.reduce((a, r) => a + r.handled, 0) / Math.max(1, slaMonths.reduce((a, r) => a + r.total, 0)) * 100) }}</div><div class="kpi-s">mevcut filo ve SLA ile</div></div></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- ================= İade Dönüş Saati ================= -->
             <div v-if="activeTab === 'iadeSaati'">
                 <div class="card shadow-sm border-0" style="max-width: 680px;">
@@ -792,6 +852,15 @@
                         <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Karşılanan Dosya Oranı<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Karşılanan Dosya Oranı')" @mouseleave="hideTip" @click="showTip($event, 'Karşılanan Dosya Oranı')"></i></div><div class="kpi-v" :class="ratioClass(view.files.ratio)">{{ pct(view.files.ratio) }}</div><div class="kpi-s"><span class="text-danger">●</span> %50 altı <span class="text-warn">●</span> %50-75 <span class="text-success">●</span> %75 üstü</div></div></div>
                         <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Araç Sayısı<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Araç Sayısı')" @mouseleave="hideTip" @click="showTip($event, 'Araç Sayısı')"></i></div><div class="kpi-v">{{ formatCurrency(view.plateTotal) }}</div><div class="kpi-s">Hiç dosya almayan: <b :class="view.idlePlates ? 'text-danger' : ''">{{ view.idlePlates }}</b> araç</div></div></div>
                     </div>
+                    <template v-if="slaActive">
+                        <div class="kpi-title">SLA (Gecikmeli Teslimat)</div>
+                        <div class="row g-3 mb-3">
+                            <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">SLA ile Karşılanan<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'SLA ile Karşılanan')" @mouseleave="hideTip" @click="showTip($event, 'SLA ile Karşılanan')"></i></div><div class="kpi-v text-warn">{{ formatCurrency(view.files.sla) }} <small class="text-muted fs-6">dosya</small></div><div class="kpi-s">Karşılananların {{ pct(view.files.handled ? view.files.sla / view.files.handled * 100 : 0) }}'i bekleyerek verildi</div></div></div>
+                            <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Ortalama Bekleme<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Ortalama Bekleme')" @mouseleave="hideTip" @click="showTip($event, 'Ortalama Bekleme')"></i></div><div class="kpi-v">{{ fmt1(view.files.avgWait) }} <small class="text-muted fs-6">saat</small></div><div class="kpi-s">SLA ile karşılanan dosyalarda</div></div></div>
+                            <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Hemen Karşılanan</div><div class="kpi-v">{{ formatCurrency(view.files.handled - view.files.sla) }} <small class="text-muted fs-6">dosya</small></div><div class="kpi-s">Teslimat anında boş araçla</div></div></div>
+                            <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">SLA Kuralı</div><div class="kpi-v fs-6 pt-1">{{ [...new Set(settings.sla)].length === 1 ? fmtSla(settings.sla[0]) + ' (tüm aylar)' : 'Aya göre değişken' }}</div><div class="kpi-s"><a href="#" class="text-orange" @click.prevent="go('sla')">SLA sayfası</a></div></div></div>
+                        </div>
+                    </template>
                     <div class="kpi-title">Operasyon Yükü</div>
                     <div class="row g-3 mb-3">
                         <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">En Yoğun Gün<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'En Yoğun Gün')" @mouseleave="hideTip" @click="showTip($event, 'En Yoğun Gün')"></i></div><div class="kpi-v">{{ formatCurrency(opsLoad.max.total) }} <small class="text-muted fs-6">işlem</small></div>
