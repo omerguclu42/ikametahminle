@@ -199,7 +199,7 @@
             }
             rows.push({ kalem, kategori, grup: 'isletme', tip, aciklama, vals });
         });
-        const P = num(v.alisBedeli), buy = {}, intr = {};
+        const P = netPrice(v), buy = {}, intr = {};
         life.forEach(y => { buy[y] = 0; intr[y] = 0; });
         const credit = !!(v.kredili && num(v.vade) > 0 && P > 0);
         const loan = credit ? loanSchedule(P, v.vade, v.faiz) : loanSchedule(0, 0, 0);
@@ -460,12 +460,12 @@
         const buyRow = rows.find(r => r.grup === 'alis'), intRow = rows.find(r => r.grup === 'faiz');
         if (L.length && buyRow) {
             if (ct.loan.credit) {
-                loanSchedule(v.alisBedeli, v.vade, v.faiz).months.forEach((m, i) => {
+                loanSchedule(netPrice(v), v.vade, v.faiz).months.forEach((m, i) => {
                     const yi = Math.floor(i / 12);
                     if (yi < L.length) { const y = L[yi], k = fx.K(y, i % 12); buyRow.vals[y] += m.principal / k; if (intRow) intRow.vals[y] += m.interest / k; }
                     else buyRow.vals[last] += m.principal / fx.K(last, 11); // erken kapama: satış ayında
                 });
-            } else buyRow.vals[first] = num(v.alisBedeli) / fx.K(first, 0);
+            } else buyRow.vals[first] = netPrice(v) / fx.K(first, 0);
         }
         const sumG = (gr, y) => rows.filter(r => r.grup === gr).reduce((s, r) => s + r.vals[y], 0);
         const totals = {}, opTotals = {}, buyTotals = {}, intTotals = {}; let total = 0;
@@ -475,6 +475,10 @@
         return { ...ct, rows, totals, opTotals, buyTotals, intTotals, total, sale, netTotal, annualNet: netTotal / Math.max(1, L.length),
             loan: { ...ct.loan, paidInterest, creditTotal: (buyRow ? Object.values(buyRow.vals).reduce((a, b) => a + b, 0) : 0) + paidInterest, tl: true }, eur: true };
     }
+
+    /* Filo indirimi (%0-50): girilen liste fiyatından düşülür; peşin ödeme ve kredi anaparası indirimli fiyattır */
+    const discountPct = v => Math.min(50, Math.max(0, num(v && v.filoIndirim)));
+    const netPrice = v => num(v.alisBedeli) * (1 - discountPct(v) / 100);
 
     /* Personel giderleri: kişi başı yıllık tutar x personel sayısı, enflasyonla artar (filo geneli sabit gider) */
     function personnelTable(settings, years) {
@@ -661,7 +665,7 @@
 
     const api = { SEGMENTS, FUELS, DEFAULT_HEADERS, parseDate, formatDate, normSegment, normCustomer, parseCSV, rowsToRecords, tableToRows, missingHeaders, hasCustomerColumn,
         makeRates, priceKey, splitKey, NONE_KEY, makeFx, convertCostTable,
-        sortedYears, inflationFactors, loanSchedule, costTable, COST_TYPES, costType, personnelTable, missingFields, isVehicleComplete, simulate, fleetCurve, dailyPeaks,
+        sortedYears, inflationFactors, loanSchedule, netPrice, discountPct, costTable, COST_TYPES, costType, personnelTable, missingFields, isVehicleComplete, simulate, fleetCurve, dailyPeaks,
         freeAtOf, buildReport, rentDays, adjustFiles };
     if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;
 })(typeof window !== 'undefined' ? window : globalThis);

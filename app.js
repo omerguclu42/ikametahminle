@@ -90,6 +90,18 @@ function normalizeSettings(s) {
     }
     s.giderTanimlari.forEach(h => { h.tip = E.costType(h); delete h.yakitKm; });
     if (!Array.isArray(s.personelTanimlari)) s.personelTanimlari = [];
+    // Maaş: ayrı alandan girilir (aylık brüt × personel çarpanı × 12 = kişi başı yıllık); listede kilitli "Maaş" satırı olarak durur.
+    // Eski veride elle eklenmiş "Maaş" başlığı varsa bu satıra dönüştürülür (yıllık tutar ÷ 12 = aylık brüt, çarpan 1).
+    if (!s.personelTanimlari.some(h => h.maas)) {
+        const old = s.personelTanimlari.find(h => String(h.ad || '').trim().toLocaleLowerCase('tr') === 'maaş');
+        if (old) { old.maas = true; old.ad = 'Maaş'; old.kategori = 'Maaş'; old.brut = Number(old.tutar) ? Math.round(Number(old.tutar) / 12 * 100) / 100 : null; old.carpan = 1; }
+    }
+    s.personelTanimlari.forEach(h => {
+        if (!h.maas) return;
+        if (h.brut === undefined) h.brut = null;
+        if (h.carpan === undefined || h.carpan === null || h.carpan === '') h.carpan = 1;
+        h.tutar = (Number(h.brut) || 0) * (Number(h.carpan) || 0) * 12;
+    });
     if (s.personelSayisi === undefined) s.personelSayisi = null;
     if (s.personelKilit === undefined) s.personelKilit = s.personelSayisi !== null; // önceden elle girilmiş sayı korunur
     s.personelKilit = !!s.personelKilit;
@@ -137,6 +149,7 @@ function normalizeVehicle(v) {
     if (!SEGMENTS.includes(v.segment)) v.segment = 'B';
     if (v.satisTutari === undefined) v.satisTutari = null;
     if (v.alisBedeli === undefined) v.alisBedeli = null;
+    v.filoIndirim = Math.min(50, Math.max(0, Math.round(Number(v.filoIndirim) || 0)));
     v.kredili = !!v.kredili;
     if (v.vade === undefined) v.vade = null;
     if (v.faiz === undefined) v.faiz = null;
@@ -650,6 +663,7 @@ const app = createApp({
             };
         },
 
+        maasRow() { return this.settings.personelTanimlari.find(h => h.maas) || null; },
         /* Personel sayfası: yıllık özet + öneri */
         persSummary() {
             const k = E.inflationFactors(this.years, this.settings.enflasyonOranlari || {});
@@ -1529,11 +1543,11 @@ const app = createApp({
                 // Araç alışı: peşin → ilk yılın Ocak'ı; kredili → aylık taksit, ömür sonunda kalan anapara
                 const K = R.fx ? R.fx.K : () => 1; // Euro: her ödeme kendi ayının kuruyla
                 if (ct.loan.credit) {
-                    E.loanSchedule(v.alisBedeli, v.vade, v.faiz).months.forEach((m, k) => {
+                    E.loanSchedule(E.netPrice(v), v.vade, v.faiz).months.forEach((m, k) => {
                         const yIdx = Math.floor(k / 12), yy = yIdx < L ? life[yIdx] : life[L - 1], mm = yIdx < L ? k % 12 : 11, r = at(yy, mm);
                         if (r) r.capex += (yIdx < L ? m.principal + m.interest : m.principal) / K(yy, mm) * sh;
                     });
-                } else { const r = at(life[0], 0); if (r) r.capex += (Number(v.alisBedeli) || 0) / K(life[0], 0) * sh; }
+                } else { const r = at(life[0], 0); if (r) r.capex += E.netPrice(v) / K(life[0], 0) * sh; }
                 const last = life[L - 1], rs = at(last, 11); if (rs) rs.sale += p.byYear[last].sale * sh;
             });
             if (!any) return { years: [], turn: null, low: null, tot: null };
@@ -1592,6 +1606,21 @@ const app = createApp({
         /* Bir fiyat tablosunda (segment+müşteri → gün) seçili müşterilerin gün payı */
         dayShare(pr, cs) { let a = 0, t = 0; for (const k in pr) { const d = pr[k]; t += d; if (cs.has(E.splitKey(k)[1])) a += d; } return t ? a / t : 0; },
         /* Personel sayısı kilidi: açıkken önerilen sayıdan otomatik; elle değiştirince kilitlenir */
+        E_netPrice(v) { return E.netPrice(v); },
+        /* Maaş alanı: aylık brüt ve personel çarpanı; kişi başı yıllık = brüt × çarpan × 12 (listedeki Maaş satırına yazılır) */
+        setMaas(field, v) {
+            const L = this.settings.personelTanimlari;
+            let h = L.find(x => x.maas);
+            if (!h) {
+                if (v === null || v === '') return;
+                h = { ad: 'Maaş', kategori: 'Maaş', maas: true, brut: null, carpan: 1, tutar: 0 };
+                const dup = L.findIndex(x => String(x.ad || '').trim().toLocaleLowerCase('tr') === 'maaş');
+                if (dup >= 0) L.splice(dup, 1);
+                L.unshift(h);
+            }
+            h[field] = v;
+            h.tutar = (Number(h.brut) || 0) * (Number(h.carpan) || 0) * 12;
+        },
         onPersInput(v) { this.settings.personelSayisi = v; if (!this.settings.personelKilit) this.settings.personelKilit = true; },
         togglePersLock() {
             this.settings.personelKilit = !this.settings.personelKilit;
@@ -1677,6 +1706,7 @@ const app = createApp({
         addHeader() {
             const name = this.newHeader.trim();
             if (!name) { this.headerError = 'Lütfen bir başlık yazın.'; return; }
+            if (this.isP && name.toLocaleLowerCase('tr') === 'maaş') { this.headerError = 'Maaş, yukarıdaki Maaş Gideri alanından (aylık brüt × personel çarpanı) girilir.'; return; }
             if (this.isP && (this.newAmount === null || this.newAmount === undefined)) { this.headerError = 'Lütfen kişi başı yıllık tutarı yazın.'; return; }
             const taken = this.isP ? this.settings.personelTanimlari.map(h => h.ad) : [...DEFAULT_HEADERS, ...this.settings.giderTanimlari.map(h => h.ad)];
             if (taken.some(n => n.toLocaleLowerCase('tr') === name.toLocaleLowerCase('tr'))) { this.headerError = 'Bu başlık zaten var.'; return; }
@@ -1806,7 +1836,7 @@ const app = createApp({
 
         /* ---- Araç ---- */
         getEmptyVehicle() {
-            return { id: 'v' + Date.now(), markaModel: '', segment: 'B', yakitTuru: 'Benzin', alisBedeli: null, kredili: false, vade: null, faiz: null,
+            return { id: 'v' + Date.now(), markaModel: '', segment: 'B', yakitTuru: 'Benzin', alisBedeli: null, filoIndirim: 0, kredili: false, vade: null, faiz: null,
                 satisTutari: null, imageBase64: '', count: 0, giderler: {}, giderAdet: {} };
         },
         openVehicleModal(index = -1) {
@@ -1842,7 +1872,7 @@ const app = createApp({
         loanPreview() {
             const t = this.tempVehicle;
             if (!t || !t.kredili || !Number(t.vade) || !Number(t.alisBedeli)) return null;
-            return E.loanSchedule(t.alisBedeli, t.vade, t.faiz);
+            return E.loanSchedule(E.netPrice(t), t.vade, t.faiz);
         },
         /* Gider ve performans verilerini kopyala / yapıştır (temel bilgiler hariç) */
         copyCosts() {
@@ -2065,7 +2095,7 @@ const app = createApp({
                 ['Araç satış tutarı', vMod((v, k) => { if (v.satisTutari !== null) v.satisTutari = Number(v.satisTutari) * k; })],
                 ['Araç işletme giderleri', vMod((v, k) => opHeads.forEach(h => { if (v.giderler[h] !== null && v.giderler[h] !== undefined) v.giderler[h] = Number(v.giderler[h]) * k; }))],
                 ['Yakıt fiyatı', sMod((st, k) => scaleMap(st.yakitFiyatlari, k))],
-                ['Personel gideri', sMod((st, k) => st.personelTanimlari.forEach(h => { h.tutar = Number(h.tutar) * k; }))],
+                ['Personel gideri', sMod((st, k) => st.personelTanimlari.forEach(h => { h.tutar = Number(h.tutar) * k; if (h.maas) h.brut = Number(h.brut) * k; }))],
                 ['Enflasyon (±' + Math.round(p * 50) + ' puan)', k => { const st = clone(this.settings); const d = (k > 1 ? 1 : -1) * p * 50; Object.keys(st.enflasyonOranlari).forEach(y => { st.enflasyonOranlari[y] = Number(st.enflasyonOranlari[y]) + d; }); return [st, baseV, g0]; }],
                 ['Hizmet sayısı', k => [this.settings, baseV, g0 + (k > 1 ? 1 : -1) * p * 100]],
                 ...(fx0 ? [['Euro kuru', k => [this.settings, baseV, g0, { ...fx0, K: (y, m) => fx0.K(y, m) * k, hk: y => fx0.hk(y) / k }]]] : [])

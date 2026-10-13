@@ -161,12 +161,41 @@
                     </div>
                 </div>
 
+                <div class="card shadow-sm border-0 mb-4" v-if="isP">
+                    <div class="card-body">
+                        <h6 class="text-orange border-bottom pb-2">Maaş Gideri</h6>
+                        <div class="row g-3 align-items-start">
+                            <div class="col-sm-6 col-lg-3">
+                                <label class="form-label small fw-bold">Personel aylık brüt gider (₺)</label>
+                                <num-input :model-value="maasRow ? maasRow.brut : null" @update:model-value="v => setMaas('brut', v)" :step="1" :min="0"></num-input>
+                                <div class="small text-muted mt-1">Piyasadaki aylık brüt maaş (kişi başı)</div>
+                            </div>
+                            <div class="col-sm-6 col-lg-3">
+                                <label class="form-label small fw-bold">Personel çarpanı</label>
+                                <num-input :model-value="maasRow ? maasRow.carpan : 1" @update:model-value="v => setMaas('carpan', v)" :step="0.1" :min="0" decimals></num-input>
+                                <div class="small text-muted mt-1">Piyasa maaşının kaç katı ödenecek</div>
+                            </div>
+                            <div class="col-sm-6 col-lg-3">
+                                <label class="form-label small">Aylık personel gideri (kişi başı)</label>
+                                <input class="form-control form-control-sm bg-light fw-bold" :value="moneyTL(maasRow ? (Number(maasRow.brut) || 0) * (Number(maasRow.carpan) || 0) : 0)" readonly>
+                                <div class="small text-muted mt-1">Brüt × çarpan</div>
+                            </div>
+                            <div class="col-sm-6 col-lg-3">
+                                <label class="form-label small">Yıllık maaş gideri (kişi başı)</label>
+                                <input class="form-control form-control-sm bg-light fw-bold text-orange" :value="moneyTL(maasRow ? maasRow.tutar : 0)" readonly>
+                                <div class="small text-muted mt-1">Aylık × 12 · {{ years[0] }} fiyatı</div>
+                            </div>
+                        </div>
+                        <div class="small text-muted mt-2">Örnek: 40.000 ₺ × 2 = aylık 80.000 ₺ → yıllık 960.000 ₺. Bu tutar aşağıdaki listeye otomatik <b>"Maaş"</b> başlığı (kategori Maaş) olarak eklenir; toplam maaş gideri = yıllık tutar × personel sayısı, sonraki yıllarda enflasyonla artar. SGK, yemek, yol gibi diğer personel giderleri aşağıdan eskisi gibi kişi başı yıllık tutar olarak eklenir.</div>
+                    </div>
+                </div>
+
                 <div class="card shadow-sm border-0 mb-4">
                     <div class="card-body">
                         <p class="text-muted">{{ isP ? 'Çalıştıracağınız vale/personel için tüm maliyet başlıklarını buradan yönetebilirsiniz. Bu başlıklar araç giriş formunda görünmez.' : 'Araçlar için girmek istediğiniz tüm maliyet başlıklarını buradan yönetebilirsiniz. Tüm başlıklar araç formunda zorunlu alan olur.' }}</p>
                         <div style="max-width: 560px;">
                             <label class="form-label">Yeni başlık ekle</label>
-                            <input type="text" class="form-control mb-3" v-model="newHeader" :placeholder="isP ? 'Yeni başlık ekle (Örn: Maaş)' : 'Yeni başlık ekle (Örn: Lastik Gideri)'" @keyup.enter="addHeader">
+                            <input type="text" class="form-control mb-3" v-model="newHeader" :placeholder="isP ? 'Yeni başlık ekle (Örn: SGK, Yemek)' : 'Yeni başlık ekle (Örn: Lastik Gideri)'" @keyup.enter="addHeader">
                             <label class="form-label">Kategori</label>
                             <input type="text" class="form-control mb-3" v-model="newCategory" list="catList" placeholder="Kategori (Örn: Ekipman)" @keyup.enter="addHeader">
                             <datalist id="catList"><option v-for="c in categories" :key="c" :value="c"></option></datalist>
@@ -208,16 +237,17 @@
                                 <td class="drag-handle"><i class="bi bi-grip-vertical"></i></td>
                                 <td>{{ h.ad }}</td>
                                 <td><span class="badge bg-light text-dark border">{{ h.kategori }}</span></td>
-                                <td v-if="isP"><num-input v-model="h.tutar" :step="1"></num-input></td>
+                                <td v-if="isP && h.maas"><div class="fw-bold">{{ moneyTL(h.tutar) }}</div><div class="small text-muted">{{ moneyTL(h.brut || 0) }} × {{ String(h.carpan).replace('.', ',') }} × 12 · Maaş Gideri alanından</div></td>
+                                <td v-else-if="isP"><num-input v-model="h.tutar" :step="1"></num-input></td>
                                 <td v-else><select class="form-select form-select-sm" v-model="h.tip"><option v-for="(t, k) in costTypes" :key="k" :value="k">{{ t.ad }}</option></select></td>
-                                <td class="text-end text-nowrap"><i class="bi bi-pencil-square text-secondary cursor-pointer me-3 hdr-act" title="Düzenle" @click="openHeaderEdit(i)"></i><i class="bi bi-trash text-orange cursor-pointer hdr-act" title="Sil" @click="removeHeader(i)"></i></td>
+                                <td class="text-end text-nowrap"><i v-if="!h.maas" class="bi bi-pencil-square text-secondary cursor-pointer me-3 hdr-act" title="Düzenle" @click="openHeaderEdit(i)"></i><i class="bi bi-trash text-orange cursor-pointer hdr-act" title="Sil" @click="removeHeader(i)"></i></td>
                             </tr>
                         </tbody>
                     </table>
                     <div class="empty-state" v-else>
                         <i class="bi" :class="isP ? 'bi-people' : 'bi-tags'"></i>
                         <div class="es-title">Henüz başlık eklenmedi</div>
-                        <div class="es-text">{{ isP ? 'Maaş, SGK, yemek gibi kişi başı yıllık giderleri yukarıdan ekleyin.' : 'Kasko, bakım, lastik gibi yıllık giderleri ve yakıt km başlığını yukarıdan ekleyin.' }}</div>
+                        <div class="es-text">{{ isP ? 'Maaşı yukarıdaki Maaş Gideri alanından; SGK, yemek gibi diğer kişi başı yıllık giderleri yukarıdan ekleyin.' : 'Kasko, bakım, lastik gibi yıllık giderleri ve yakıt km başlığını yukarıdan ekleyin.' }}</div>
                     </div>
                 </div>
                 <small class="text-muted" v-if="hdrList.length">Başlıkları tutup sürükleyerek sıralayabilirsiniz.{{ isP ? '' : ' Sıra, araç giriş formunda da aynen kullanılır.' }}</small>
@@ -238,7 +268,7 @@
                                 <span class="badge bg-info text-dark mb-2 me-1">{{ v.yakitTuru }}</span>
                                 <span class="badge bg-warning text-dark mb-2" v-if="v.kredili">Kredili</span>
                                 <div class="small text-muted">Optimum {{ v.giderler[defaultHeaders[0]] || '-' }} yıl · {{ formatCurrency(v.giderler[defaultHeaders[1]]) }} km</div>
-                                <div class="small text-muted">Alış: {{ empty(v.alisBedeli) ? '-' : money(v.alisBedeli) }}<span v-if="v.kredili && costOf(v.id) && costOf(v.id).loan.credit"> (kredili {{ money(costOf(v.id).loan.creditTotal) }})</span></div>
+                                <div class="small text-muted">Alış: {{ empty(v.alisBedeli) ? '-' : moneyTL(E_netPrice(v)) }}<span v-if="v.filoIndirim > 0 && !empty(v.alisBedeli)"> (%{{ v.filoIndirim }} filo indirimli)</span><span v-if="v.kredili && costOf(v.id) && costOf(v.id).loan.credit"> (kredili {{ money(costOf(v.id).loan.creditTotal) }})</span></div>
                                 <div class="small text-muted">Satış: {{ empty(v.satisTutari) ? '-' : money(v.satisTutari) }}</div>
                                 <div class="small text-warning-emphasis mt-1" v-if="isComplete(v) && Number(v.giderler[defaultHeaders[0]]) !== years.length"><i class="bi bi-exclamation-triangle"></i> Optimum satış yılı ({{ v.giderler[defaultHeaders[0]] }}) tahminleme yılından ({{ years.length }}) farklı</div>
                                 <div class="incomplete-badge mt-2" v-if="!isComplete(v)"><i class="bi bi-exclamation-triangle-fill me-1"></i>Eksik bilgi: {{ missingOf(v).join(', ') }}</div>
@@ -1296,6 +1326,12 @@
                             <div class="form-text" v-if="tempVehicle.yakitTuru === 'Elektrik'">Elektrikli araçta 100 KM tüketimini kWh olarak girin.</div></div>
                         <div class="mb-2"><label class="form-label">Araç Alış Bedeli (₺) <span class="text-danger">*</span></label>
                             <num-input v-model="tempVehicle.alisBedeli" :step="1" :min="0" :invalid="topInvalid('alisBedeli')"></num-input></div>
+                        <div class="mb-2"><label class="form-label">Filo İndirimi</label>
+                            <select class="form-select" v-model.number="tempVehicle.filoIndirim"><option v-for="n in 51" :key="n" :value="n - 1">%{{ n - 1 }}</option></select>
+                            <div class="small mt-1" v-if="tempVehicle.filoIndirim > 0 && Number(tempVehicle.alisBedeli) > 0">
+                                <span class="text-muted">İndirim {{ moneyTL(Number(tempVehicle.alisBedeli) - E_netPrice(tempVehicle)) }} →</span>
+                                <b class="text-orange">İndirimli alış bedeli {{ moneyTL(E_netPrice(tempVehicle)) }}</b></div>
+                            <div class="form-text" v-else>Girilen alış bedelinden düşülür; peşin ödeme ve kredi bu indirimli tutar üzerinden hesaplanır.</div></div>
                         <div class="form-check mb-2">
                             <input class="form-check-input" type="checkbox" id="krediCk" v-model="tempVehicle.kredili">
                             <label class="form-check-label" for="krediCk">Krediyle mi alındı?</label>

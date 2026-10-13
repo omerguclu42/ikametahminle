@@ -52,6 +52,12 @@ window.GUIDE = [
         id: 'personelGider', title: 'Personel Gider Başlıkları', icon: 'bi-people',
         intro: 'Vale ve personel maliyetleri kişi başı yıllık tutar olarak girilir. Toplam personel gideri = kişi başı tutar × personel sayısı; her yıl enflasyonla artar.',
         sections: [
+            { h: 'Maaş gideri', items: [
+                'Maaş ayrı bir alandan girilir: personel aylık brüt gider (piyasa maaşı) ve personel çarpanı (piyasanın kaç katı ödeneceği).',
+                'Kişi başı yıllık maaş = aylık brüt × çarpan × 12. Örnek: 40.000 ₺ × 2 = 80.000 ₺ aylık → 960.000 ₺ yıllık.',
+                'Bu tutar gider listesine otomatik "Maaş" başlığı (kategori Maaş) olarak eklenir; listeden düzenlenmez, Maaş Gideri alanından değiştirilir. Silinirse maaş gideri kaldırılır.',
+                'Diğer personel giderleri (SGK, yemek, yol…) eskisi gibi başlık + kategori + kişi başı yıllık tutar olarak eklenir.'
+            ] },
             { h: 'Personel sayısı', items: [
                 'Simülatördeki toplam araç: Tahminleme Simülatörü\'ndeki araç adetlerinin toplamı (otomatik).',
                 'Kaç araca 1 personel: örneğin 10 yazarsanız her 10 araç için 1 personel önerilir.',
@@ -71,7 +77,8 @@ window.GUIDE = [
         sections: [
             { h: 'Temel bilgiler', items: [
                 'Segment: aracın hangi segment dosyalarını alacağını belirler (B, C, C+, D, D+, E, E+).',
-                'Araç alış bedeli: peşin alımda tamamı ilk kullanım yılına gider yazılır.',
+                'Araç alış bedeli: liste fiyatı girilir. Peşin alımda (indirimli) tutarın tamamı ilk kullanım yılına gider yazılır.',
+                'Filo indirimi: %0–%50 arasında seçilir (varsayılan %0). Alış bedeli = girilen bedel × (1 − indirim). Kredi seçiliyse kredi de bu indirimli tutar üzerinden hesaplanır (taksit, faiz). Duyarlılık analizindeki "Araç alış bedeli" kalemi de indirimli fiyatı değiştirir.',
                 'Krediyle alındı: vade (en fazla optimum satış yılı × 12 ay) ve yıllık faiz seçilir. Eşit taksitli kredi; aylık faiz = yıllık ÷ 12. Taksitlerin anapara kısmı "Alış Gideri", faiz kısmı "Faiz Gideri" olarak ödendiği yıllara yazılır.',
                 'Araç satış tutarı: optimum satış yılının sonunda gelir olarak yazılır.'
             ] },
