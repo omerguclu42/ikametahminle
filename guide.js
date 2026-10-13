@@ -99,6 +99,23 @@ window.GUIDE = [
         ]
     },
     {
+        id: 'vade', title: 'Vade Hesaplama (Filo mu, Mevduat mı?)', icon: 'bi-piggy-bank',
+        intro: 'Filoya yatırılan parayı mevduatta tutsaydık ne kazanırdık? Simülatördeki tüm filonun ay ay nakit akışı, yıl bazında girilen mevduat faiziyle karşılaştırılır. Araç adedi, fiyat, kredi, günlük tutar, SLA, kur gibi her değişiklik anında yansır.',
+        sections: [
+            { h: 'Girdi', items: [
+                'Her tahmin yılı için yıllık ortalama mevduat faizi (vergi öncesi): TL görünümünde TL faizi, € görünümünde Euro faizi kullanılır.',
+                'Faiz işleme biçimi: aylık bileşik (32 günlük vade sürekli yenilenir, yıllık oran ÷ 12 her ay) ya da yıllık efektif.'
+            ] },
+            { h: 'Hesap', items: [
+                'Yatırım tutarı = filonun en yüksek finansman ihtiyacı (kümülatif nakdin en düşük değeri).',
+                'Filo hesabı bu tutarla başlar; her ay faiz işler, ayın net nakdi eklenir (fazla nakit mevduatta değerlendirilir, eksik ay mevduattan çekilir). Mevduat hesabı aynı tutarla başlar ve yalnızca faiz kazanır.',
+                'Fark = dönem sonu (araç satışı dahil) filo hesabı − mevduat hesabı. Pozitifse filo kurmak mantıklıdır.',
+                'Operasyonun yıllık getirisi: nakit akışlarının iç verim oranı. Mevduat faizi bunun altındaysa filo kazanır (başabaş faiz). Aylık bileşik seçiliyken yıllık nominal, yıllık efektif seçiliyken efektif oran olarak gösterilir.',
+                'Simülatörde "Yatırım Alternatifi (Mevduat)" kartları ve Raporlama\'da "Filo mu, Mevduat mı?" analizi aynı hesabı gösterir; hesap tüm filo içindir, filtrelerden etkilenmez.'
+            ] }
+        ]
+    },
+    {
         id: 'kur', title: 'Döviz Kuru ve Euro Görünümü', icon: 'bi-currency-euro',
         intro: 'Tahminleme yıllarının aylık Euro kuru girilir (1 € = ? ₺). Sol menüdeki Para Birimi bölümünden € seçilince sonuç ekranları (Simülatör, Raporlama, Günlük Tutar analizleri) Euro gösterir. Seçim kişiseldir (bu tarayıcıda saklanır); kur tablosu tüm kullanıcılar için ortaktır.',
         sections: [

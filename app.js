@@ -19,7 +19,7 @@ const custLabel = c => c || NO_CUST_LABEL;
 const STAT_KEYS = ['total', 'handled', 'own', 'up', 'down', 'days', 'sla', 'wait'];
 const SLA_HOURS = Array.from({ length: 73 }, (_, h) => h); // 00:00:00 … 72:00:00
 const ALL_MONTHS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-const OUTPUT_TABS = ['tahminleme', 'raporlama', 'gunlukTutar']; // Euro seçimi yalnızca sonuç ekranlarını etkiler; giriş sayfaları her zaman TL
+const OUTPUT_TABS = ['tahminleme', 'raporlama', 'gunlukTutar', 'vade']; // Euro seçimi yalnızca sonuç ekranlarını etkiler; giriş sayfaları her zaman TL
 const CUR_KEY = 'eurocross_ikame_para_birimi';
 /* Eski tek seçimli filtreleri ('all' / tek değer) diziye çevirir */
 function normFilters(f) {
@@ -69,6 +69,8 @@ function defaultSettings() {
         musteriTutar: {},
         kurlar: {}, // { yıl: [12 ay] } 1 € = ? ₺
         sla: Array(12).fill(0), // ay bazında teslimatta beklenebilecek en uzun süre (saat)
+        mevduat: {}, // { yıl: { tl: yıllık %, eur: yıllık % } } mevduat faizi (vergi öncesi)
+        mevduatMod: 'aylik', // 'aylik': aylık bileşik (32 gün vade yenileme), 'yillik': efektif yıllık oran
         sim: DEFAULT_SIM(),
         scenarios: []
     };
@@ -109,6 +111,9 @@ function normalizeSettings(s) {
     s.musteriTutar = s.musteriTutar && typeof s.musteriTutar === 'object' && !Array.isArray(s.musteriTutar) ? s.musteriTutar : {};
     Object.keys(s.musteriTutar).forEach(c => fillCustRates(s.musteriTutar[c] = s.musteriTutar[c] || {}, s.enflasyonYillari));
     s.sla = Array.from({ length: 12 }, (_, m) => { const v = Number(Array.isArray(s.sla) ? s.sla[m] : 0); return v >= 0 && v <= 72 ? Math.round(v) : 0; });
+    s.mevduat = s.mevduat && typeof s.mevduat === 'object' ? s.mevduat : {};
+    s.enflasyonYillari.forEach(y => { const o = s.mevduat[y] || {}; s.mevduat[y] = { tl: o.tl === undefined || o.tl === '' ? null : o.tl, eur: o.eur === undefined || o.eur === '' ? null : o.eur }; });
+    s.mevduatMod = s.mevduatMod === 'yillik' ? 'yillik' : 'aylik';
     s.kurlar = s.kurlar && typeof s.kurlar === 'object' ? s.kurlar : {};
     s.enflasyonYillari.forEach(y => { const r = Array.isArray(s.kurlar[y]) ? s.kurlar[y] : []; s.kurlar[y] = Array.from({ length: 12 }, (_, m) => (r[m] === undefined || r[m] === '' ? null : r[m])); });
     s.sim = { ...DEFAULT_SIM(), ...(s.sim || {}) };
@@ -298,6 +303,7 @@ const PAGE_META = {
     iadeSaati: ['İade Dönüş Saati', 'Geç iade edilen aracın ertesi güne kalacağı saat sınırını belirleyin.'],
     sla: ['SLA (Teslimat Süresi)', 'Teslimat anında boş araç yoksa, dosyanın en fazla kaç saat bekleyip kendi filomuzla karşılanabileceğini ay bazında belirleyin.'],
     gunlukTutar: ['Günlük Tutar', 'Müşteri, segment ve yıla göre Eurocross Turkey günlük tutarı; girilen tutarla gelir, gider, kârlılık ve başabaş tahmini.'],
+    vade: ['Vade Hesaplama', 'Filoya yatırılan parayı mevduatta tutsaydık ne kazanırdık? Simülatördeki filonun ay ay nakit akışı, mevduat faiziyle karşılaştırılır; her değişiklik anında yansır.'],
     kur: ['Döviz Kuru', 'Tahminleme yıllarının aylık Euro kurunu girin (1 € = ? ₺). Euro görünümünde her tutar, paranın el değiştirdiği ayın kuruyla çevrilir.'],
     rehber: ['Çalışma Rehberi', 'Her sayfanın başlıkları ne işe yarar, hesaplar hangi mantıkla yapılır.']
 };
@@ -313,6 +319,7 @@ const app = createApp({
                 { id: 'aracGiris', label: 'Araç Veri Girişi', icon: 'bi-car-front' },
                 { id: 'yakitVeEnflasyon', label: 'Yakıt & Enflasyon', icon: 'bi-graph-up-arrow' },
                 { id: 'kur', label: 'Döviz Kuru', icon: 'bi-currency-euro' },
+                { id: 'vade', label: 'Vade Hesaplama', icon: 'bi-piggy-bank' },
                 { id: 'tarihce', label: 'Tarihçe (Dosyalar)', icon: 'bi-file-earmark-spreadsheet' },
                 { id: 'iadeSaati', label: 'İade Dönüş Saati', icon: 'bi-clock-history' },
                 { id: 'sla', label: 'SLA', icon: 'bi-hourglass-split' },
@@ -356,7 +363,7 @@ const app = createApp({
             // Günlük Tutar: seçili müşteri ve kopyalama kaynağı
             gtCust: null, gtCopyFrom: null, gtSel: { sg: null, y: null }, gtOpen: {},
             cur: (() => { try { return localStorage.getItem(CUR_KEY) === 'EUR' ? 'EUR' : 'TRY'; } catch (e) { return 'TRY'; } })(),
-            kurFill: { start: null, pct: 1.5 }, slaHours: SLA_HOURS, slaAll: 24,
+            kurFill: { start: null, pct: 1.5 }, slaHours: SLA_HOURS, slaAll: 24, vadeOpen: {},
             sensP: 10, sensData: null, sensBusy: false, margData: {}, margBusy: false,
             ds: { type: 'dosya', status: 'all', search: '', page: 1, size: 50 }
         };
@@ -516,59 +523,40 @@ const app = createApp({
             };
         },
         /* Günlük Tutar: müşterinin ay ay nakit akışı tahmini (araç alışı ilk ay / taksitlerle, satış ömür sonunda) */
-        cashLab() {
-            const R = this.report, c = this.gtCust, e = this.custEntry; if (c === null || !e) return null;
-            const sc = R.scale || 1, years = R.years, RT = R.rates, vmap = {};
-            this.vehicles.forEach(v => { vmap[v.id] = v; });
-            const rows = years.map(y => MONTHS.map((m, mi) => ({ y, mi, files: 0, days: 0, rev: 0, sale: 0, capex: 0, op: 0, pers: 0 })));
-            const yi = {}; years.forEach((y, i) => { yi[y] = i; });
-            let any = false;
-            const AF = this.custAlloc.full, PF = this.plateFull;
-            R.plates.forEach(p => {
-                if (!p.life.length) return;
-                // Araç kalemleri: segmentte müşterinin kiralama günü payı (segment ortalaması); personel: araçtaki dosya payı
-                const segT = AF.segTot[p.seg] || 0, fv = segT ? ((AF.segC[p.seg] || {})[c] || 0) / segT : 0;
-                const pcF = PF.get(p.id); let ft = 0; for (const k in pcF.cf) ft += pcF.cf[k]; const fp = ft ? (pcF.cf[c] || 0) / ft : 0;
-                if (!fv && !fp && !pcF.cd[c]) return;
-                any = true;
-                const sh = fv, ct = R.vehicleCosts[p.vid], v = vmap[p.vid] || {}, life = p.life, L = life.length;
-                const at = (y, mi) => (yi[y] === undefined ? null : rows[yi[y]][mi]);
-                life.forEach(y => {
-                    const b = p.byYear[y];
-                    for (let mi = 0; mi < 12; mi++) {
-                        const r = at(y, mi); if (!r) continue;
-                        r.op += b.op / 12 * fv; r.pers += b.pers / 12 * fp;
-                        const pr = p.mPrice[mi]; for (const k in pr) { const [sg, cc] = E.splitKey(k); if (cc !== c) continue; r.days += pr[k] * sc; r.rev += pr[k] * sc * RT.rateM(c, sg, y, mi); }
-                        r.files += ((p.mCf[mi] || {})[c] || 0) * sc;
-                    }
+        cashLab() { const c = this.gtCust; return c === null || !this.custEntry ? null : this.cashFlows(c); },
+        /* Filonun tamamının ay ay nakit akışı (filtrelerden bağımsız) — Vade Hesaplama ve mevduat karşılaştırması için */
+        fleetCash() { return this.report.plates.length ? this.cashFlows(undefined) : null; },
+        /* Vade Hesaplama: filonun nakit akışı ile aynı paranın mevduatta değerlendirilmesi.
+           Yatırım tutarı K = en yüksek finansman ihtiyacı (kümülatif nakdin en düşük değeri).
+           Operasyon hesabı: K ile başlar, her ay faiz işler ve ayın net nakdi eklenir (fazla nakit mevduatta kalır, eksik mevduattan çekilir).
+           Mevduat hesabı: K yalnızca faiz kazanır. Fark = iki hesabın dönem sonu bakiyesi farkı (aylık akışların mevduat faiziyle gelecek değeri). */
+        vadeLab() {
+            const C = this.fleetCash; if (!C || !C.years.length) return null;
+            const eur = this.isEur, mode = this.settings.mevduatMod;
+            const rateY = y => { const o = (this.settings.mevduat || {})[y] || {}, v = eur ? o.eur : o.tl; return v === null || v === undefined || v === '' ? null : Number(v); };
+            const missing = this.years.filter(y => rateY(y) === null);
+            if (missing.length) return { ready: false, missing, eur };
+            const rm = y => { const a = rateY(y) / 100; return mode === 'aylik' ? a / 12 : Math.pow(1 + a, 1 / 12) - 1; };
+            const K = Math.max(0, -(C.low ? C.low.cum : 0));
+            let op = K, dep = K, cross = null, wasBelow = false; const flows = [];
+            const years = C.years.map(t => {
+                const y0 = { op, dep };
+                const months = t.months.map(r => {
+                    const i = rm(r.y), io = op * i, id = dep * i;
+                    op += io + r.net; dep += id; flows.push(r.net);
+                    if (op < dep) wasBelow = true; else if (wasBelow && cross === null) cross = { y: r.y, mi: r.mi, n: flows.length };
+                    return { y: r.y, mi: r.mi, net: r.net, io, id, op, dep, diff: op - dep };
                 });
-                // Araç alışı: peşin → ilk yılın Ocak'ı; kredili → aylık taksit, ömür sonunda kalan anapara
-                const K = R.fx ? R.fx.K : () => 1; // Euro: her ödeme kendi ayının kuruyla
-                if (ct.loan.credit) {
-                    E.loanSchedule(v.alisBedeli, v.vade, v.faiz).months.forEach((m, k) => {
-                        const yIdx = Math.floor(k / 12), yy = yIdx < L ? life[yIdx] : life[L - 1], mm = yIdx < L ? k % 12 : 11, r = at(yy, mm);
-                        if (r) r.capex += (yIdx < L ? m.principal + m.interest : m.principal) / K(yy, mm) * sh;
-                    });
-                } else { const r = at(life[0], 0); if (r) r.capex += (Number(v.alisBedeli) || 0) / K(life[0], 0) * sh; }
-                const last = life[L - 1], rs = at(last, 11); if (rs) rs.sale += p.byYear[last].sale * sh;
+                const sum = k => months.reduce((a, m) => a + m[k], 0);
+                return { y: t.y, rate: rateY(t.y), net: t.net, io: sum('io'), id: sum('id'), op, dep, diff: op - dep, opGain: op - y0.op, depGain: dep - y0.dep, months };
             });
-            if (!any) return { years: [], turn: null, low: null, tot: null };
-            let cum = 0, turn = null, low = null, n = 0;
-            const out = years.map((y, i) => {
-                const months = rows[i].map(r => {
-                    n++; r.net = r.rev + r.sale - r.capex - r.op - r.pers; cum += r.net; r.cum = cum; r.n = n;
-                    if (low === null || cum < low.cum) low = { y: r.y, mi: r.mi, cum };
-                    if (turn === null && cum >= 0 && n > 1) turn = { y: r.y, mi: r.mi, n };
-                    return r;
-                });
-                const t = { y, files: 0, days: 0, rev: 0, sale: 0, capex: 0, op: 0, pers: 0, net: 0 };
-                months.forEach(r => { ['files', 'days', 'rev', 'sale', 'capex', 'op', 'pers', 'net'].forEach(k => { t[k] += r[k]; }); });
-                t.cum = months[11].cum; t.turn = !!(turn && turn.y === y);
-                return { ...t, months };
-            });
-            const tot = { files: 0, days: 0, rev: 0, sale: 0, capex: 0, op: 0, pers: 0, net: 0 };
-            out.forEach(t => { Object.keys(tot).forEach(k => { tot[k] += t[k]; }); });
-            return { years: out, turn, low, tot };
+            // İç verim oranı (aylık), bisection
+            const npv = i => flows.reduce((a, cf, t) => a + cf / Math.pow(1 + i, t + 1), 0);
+            let irrM = null, lo = -0.5, hi = 1, flo = npv(lo), fhi = npv(hi);
+            if (flo * fhi < 0) { for (let k = 0; k < 200; k++) { const md = (lo + hi) / 2, fm = npv(md); if (flo * fm <= 0) { hi = md; fhi = fm; } else { lo = md; flo = fm; } } irrM = (lo + hi) / 2; }
+            const irr = irrM === null ? null : (mode === 'aylik' ? irrM * 12 * 100 : (Math.pow(1 + irrM, 12) - 1) * 100);
+            const avgRate = this.years.reduce((a, y) => a + rateY(y), 0) / this.years.length;
+            return { ready: true, eur, mode, K, years, opEnd: op, depEnd: dep, opGain: op - K, depGain: dep - K, diff: op - dep, irr, avgRate, cross, plainNet: C.tot.net, low: C.low };
         },
         /* Seçili hücre. Hücre seçili değilse: müşterinin tüm segment ve yılları (kiralama günüyle ağırlıklı ortalama, toplamlar) */
         selCell() {
@@ -657,7 +645,8 @@ const app = createApp({
                 iadeSaati: true,
                 gunlukTutar: this.rateCustomers.length > 0 && !this.custMissingOwn.length,
                 kur: this.fx.ok,
-                sla: true
+                sla: true,
+                vade: !this.years.some(y => { const o = (this.settings.mevduat || {})[y] || {}; return o.tl === null || o.tl === undefined || o.tl === ''; })
             };
         },
 
@@ -1169,6 +1158,10 @@ const app = createApp({
                 'Personel Gideri': `Personel başlıklarının kişi başı yıllık tutarı × çalıştırılacak personel sayısı; enflasyonla artar.\nFilo geneli sabit gider olarak, o yıl aktif araçlara aldıkları dosya oranında dağıtılır.\nToplam: ${m(t.pers)}`,
                 'Net Kâr / Zarar': `Araç satış geliri + dosya geliri − işletme − alış − faiz − personel\n= ${sm(t.sale)} + ${sm(t.revenue)} − ${sm(t.op)} − ${sm(t.buy)} − ${sm(t.int)} − ${sm(t.pers)}\n= ${m(t.net)}`,
                 'Filo Doluluk Oranı': `Çalışılan gün ÷ (çalışılan + boşta gün).\nHer plaka dönem boyunca ${R.period} gün sayılır (tarihçe 1 yıllıksa 365).\n${f(t.work)} ÷ ${f(t.work + t.idle)} = ${pc(V.util)}`,
+                'Mevduata Göre Fark': this.vadeLab && this.vadeLab.ready ? `Dönem sonunda (araç satışı dahil) operasyon hesabı − mevduat hesabı.\nOperasyon: ${m(this.vadeLab.opEnd)} · Mevduat: ${m(this.vadeLab.depEnd)} → ${m(this.vadeLab.diff)}\nPozitifse filoyu kurmak, aynı parayı mevduatta tutmaktan kârlı. Ayrıntı: Vade Hesaplama sayfası.` : '',
+                'Operasyonun Yıllık Getirisi': this.vadeLab && this.vadeLab.ready ? `Filonun ay ay nakit akışlarının iç verim oranı (${this.vadeLab.mode === 'aylik' ? 'aylık bileşik, yıllık nominal' : 'efektif yıllık'}).\nMevduat faizi bu oranın altındaysa operasyon kârlı; aynı zamanda başabaş mevduat faizidir.\nOperasyon %${this.fmt1(this.vadeLab.irr || 0)} · ortalama mevduat %${this.fmt1(this.vadeLab.avgRate)}` : '',
+                'Mevduatta Olsaydı': this.vadeLab && this.vadeLab.ready ? `Yatırım tutarı (en yüksek finansman ihtiyacı) ${m(this.vadeLab.K)}, dönem boyunca mevduatta yıl bazında girilen faizlerle değerlendirilseydi kazanılacak faiz.` : '',
+                'Operasyon Kazancı (Faizli)': this.vadeLab && this.vadeLab.ready ? `Aynı ${m(this.vadeLab.K)} ile filo kurulur; her ayın fazla nakdi mevduatta faiz kazanır, eksik ay mevduattan çekilir.\nDönem sonu bakiye − yatırım = ${m(this.vadeLab.opGain)}\nFaizsiz düz toplam net: ${m(this.vadeLab.plainNet)}` : '',
                 'SLA ile Karşılanan': `Teslimat anında kendi segmentinde boş araç olmayan, ama teslimat ayının SLA süresi içinde boşa çıkan araçla karşılanan dosyalar.\nDosya, aracın boşa çıktığı anda verilir; iade de aynı süre kadar kayar (kiralama süresi ve gelir değişmez).\n${f(V.files.sla)} dosya · karşılananların ${pc(fs.handled ? V.files.sla / fs.handled * 100 : 0)}'i`,
                 'Ortalama Bekleme': `SLA ile karşılanan dosyaların, talep edilen teslimat saatinden aracın verildiği saate kadar ortalama bekleme süresi.\n${this.fmt1(V.files.avgWait)} saat`,
                 'Karşılanan Dosya': `Talep: tarihçedeki dosya sayısı (seçili segment / ay).\nKarşılanan: araç verilebilen dosyalar (kendi segmenti + açıksa üst/alt segment).\nDosya, teslim anında boşta olan, segmentindeki en düşük giderli araca verilir; iade saati sınırından sonra dönen araç ertesi gün boşa çıkar.\nSLA: teslim anında boş araç yoksa, teslimat ayının SLA süresi içinde ilk boşa çıkan araç beklenir; o süre içinde de araç yoksa dosya karşılanamaz.\n${f(fs.handled)} / ${f(fs.total)}`,
@@ -1329,6 +1322,16 @@ const app = createApp({
                     cols: ['Ay', 'Ort. Teslimat', 'Ort. İade', 'Ort. İşlem', 'En Yoğun Gün', 'Personel Başına (ort.)'],
                     rows: Object.keys(byM).map(Number).sort((a, b) => a - b).map(k => { const o = byM[k], avg = (o.d + o.r) / o.n; return [c(MONTHS[k], 'text-start fw-bold'), c(this.fmt1(o.d / o.n)), c(this.fmt1(o.r / o.n)), c(this.fmt1(avg)), c(f(o.max)), c(OL.active ? this.fmt1(avg / OL.active) : '-')]; }) });
             }
+            // Mevduat karşılaştırması
+            const VL = this.vadeLab;
+            if (VL && VL.ready) {
+                const pc1 = x => '%' + this.fmt1(x);
+                B.push({ id: 'chVade', title: 'Yatırım Alternatifi: Filo mu, Mevduat mı?', sub: `Filoya yatırılan para (en yüksek finansman ihtiyacı ${sm(VL.K)}) mevduatta tutulsaydı ne olurdu? Turuncu: filo (her ayın fazla nakdi mevduatta değerlendirilir), mavi kesikli: aynı para mevduatta. Tüm filo, filtrelerden bağımsız.`,
+                    insight: (VL.diff >= 0 ? `Filo, mevduattan ${sm(VL.diff)} daha kârlı.` : `Mevduat, filodan ${sm(-VL.diff)} daha kârlı.`) + (VL.irr !== null ? ` Filonun yıllık getirisi ${pc1(VL.irr)}, ortalama mevduat faizi ${pc1(VL.avgRate)}.` : ''),
+                    cols: ['Yıl', 'Faiz', 'Net Nakit', 'Filo', 'Mevduat', 'Fark'],
+                    rows: VL.years.map(t => [c(t.y, 'text-start fw-bold'), c(pc1(t.rate)), c(sm(t.net), nc(t.net)), c(sm(t.op)), c(sm(t.dep)), c(sm(t.diff), 'fw-bold ' + nc(t.diff))]),
+                    foot: [c('Sonuç', 'text-start'), c(pc1(VL.avgRate)), c(sm(VL.plainNet), nc(VL.plainNet)), c(sm(VL.opEnd)), c(sm(VL.depEnd)), c(sm(VL.diff), nc(VL.diff))] });
+            }
             // Senaryo karşılaştırması
             const SC = this.scenarioCompare;
             if (SC.length > 1) {
@@ -1421,6 +1424,7 @@ const app = createApp({
         });
         this.$watch(() => [this.activeTab, this.report, this.sensP, this.authed], () => this.scheduleSens());
         this.$watch(() => this.sensData, () => this.scheduleCharts());
+        this.$watch(() => this.vadeLab, () => { if (this.activeTab === 'vade') this.scheduleCharts(); });
         this.$watch(() => [this.activeTab, this.report, this.authed], () => this.scheduleMarginal(), { immediate: true });
         this.$watch(() => this.present, () => this.$nextTick(() => this.scheduleCharts()));
         this.$watch(() => this.histSize, () => { this.histPage = 1; });
@@ -1494,6 +1498,62 @@ const app = createApp({
             });
             return o;
         },
+        /* Ay ay nakit akışı: c verilirse o müşteriye düşen kısım (karma dağıtım), verilmezse tüm filo.
+           Dosya geliri teslimat ayına; peşin alış ilk yılın Ocak'ına, kredi taksitleri ödendiği aya; işletme ve personel her aya eşit; satış ömrün son ayına. */
+        cashFlows(c) {
+            const R = this.report, all = c === undefined;
+            const sc = R.scale || 1, years = R.years, RT = R.rates, vmap = {};
+            this.vehicles.forEach(v => { vmap[v.id] = v; });
+            const rows = years.map(y => MONTHS.map((m, mi) => ({ y, mi, files: 0, days: 0, rev: 0, sale: 0, capex: 0, op: 0, pers: 0 })));
+            const yi = {}; years.forEach((y, i) => { yi[y] = i; });
+            let any = false;
+            const AF = this.custAlloc.full, PF = this.plateFull;
+            R.plates.forEach(p => {
+                if (!p.life.length) return;
+                // Araç kalemleri: segmentte müşterinin kiralama günü payı (segment ortalaması); personel: araçtaki dosya payı
+                const segT = AF.segTot[p.seg] || 0, fv = all ? 1 : (segT ? ((AF.segC[p.seg] || {})[c] || 0) / segT : 0);
+                const pcF = PF.get(p.id); let ft = 0; for (const k in pcF.cf) ft += pcF.cf[k]; const fp = all ? 1 : (ft ? (pcF.cf[c] || 0) / ft : 0);
+                if (!all && !fv && !fp && !pcF.cd[c]) return;
+                any = true;
+                const sh = fv, ct = R.vehicleCosts[p.vid], v = vmap[p.vid] || {}, life = p.life, L = life.length;
+                const at = (y, mi) => (yi[y] === undefined ? null : rows[yi[y]][mi]);
+                life.forEach(y => {
+                    const b = p.byYear[y];
+                    for (let mi = 0; mi < 12; mi++) {
+                        const r = at(y, mi); if (!r) continue;
+                        r.op += b.op / 12 * fv; r.pers += b.pers / 12 * fp;
+                        const pr = p.mPrice[mi]; for (const k in pr) { const [sg, cc] = E.splitKey(k); if (!all && cc !== c) continue; r.days += pr[k] * sc; r.rev += pr[k] * sc * RT.rateM(cc, sg, y, mi); }
+                        const cf = p.mCf[mi] || {}; if (all) { for (const k in cf) r.files += cf[k] * sc; } else r.files += (cf[c] || 0) * sc;
+                    }
+                });
+                // Araç alışı: peşin → ilk yılın Ocak'ı; kredili → aylık taksit, ömür sonunda kalan anapara
+                const K = R.fx ? R.fx.K : () => 1; // Euro: her ödeme kendi ayının kuruyla
+                if (ct.loan.credit) {
+                    E.loanSchedule(v.alisBedeli, v.vade, v.faiz).months.forEach((m, k) => {
+                        const yIdx = Math.floor(k / 12), yy = yIdx < L ? life[yIdx] : life[L - 1], mm = yIdx < L ? k % 12 : 11, r = at(yy, mm);
+                        if (r) r.capex += (yIdx < L ? m.principal + m.interest : m.principal) / K(yy, mm) * sh;
+                    });
+                } else { const r = at(life[0], 0); if (r) r.capex += (Number(v.alisBedeli) || 0) / K(life[0], 0) * sh; }
+                const last = life[L - 1], rs = at(last, 11); if (rs) rs.sale += p.byYear[last].sale * sh;
+            });
+            if (!any) return { years: [], turn: null, low: null, tot: null };
+            let cum = 0, turn = null, low = null, n = 0;
+            const out = years.map((y, i) => {
+                const months = rows[i].map(r => {
+                    n++; r.net = r.rev + r.sale - r.capex - r.op - r.pers; cum += r.net; r.cum = cum; r.n = n;
+                    if (low === null || cum < low.cum) low = { y: r.y, mi: r.mi, cum };
+                    if (turn === null && cum >= 0 && n > 1) turn = { y: r.y, mi: r.mi, n };
+                    return r;
+                });
+                const t = { y, files: 0, days: 0, rev: 0, sale: 0, capex: 0, op: 0, pers: 0, net: 0 };
+                months.forEach(r => { ['files', 'days', 'rev', 'sale', 'capex', 'op', 'pers', 'net'].forEach(k => { t[k] += r[k]; }); });
+                t.cum = months[11].cum; t.turn = !!(turn && turn.y === y);
+                return { ...t, months };
+            });
+            const tot = { files: 0, days: 0, rev: 0, sale: 0, capex: 0, op: 0, pers: 0, net: 0 };
+            out.forEach(t => { Object.keys(tot).forEach(k => { tot[k] += t[k]; }); });
+            return { years: out, turn, low, tot };
+        },
         /* Plakanın seçili aylarda, seçili müşterilerin dosyalarından geliri (Euro görünümünde teslimat ayının kuruyla) */
         revOf(p, months, cs, y) {
             const R = this.report, sc = R.scale || 1; let rev = 0;
@@ -1520,6 +1580,7 @@ const app = createApp({
             this.years.forEach(y => { this.settings.kurlar[y] = Array(12).fill(null); });
             if (this.cur === 'EUR') this.setCur('TRY');
         },
+        toggleVadeYear(y) { this.vadeOpen = { ...this.vadeOpen, [y]: !this.vadeOpen[y] }; },
         fmtSla(h) { return String(h).padStart(2, '0') + ':00:00'; },
         applySlaAll() { this.settings.sla = Array(12).fill(Number(this.slaAll) || 0); this.notify('Tüm aylara ' + this.fmtSla(this.slaAll) + ' uygulandı'); },
         applySlaPreset() { this.settings.sla = MONTHS.map((m, i) => (i >= 5 && i <= 8 ? 48 : 24)); this.notify('Kış 24 saat, yaz (Haziran–Eylül) 48 saat uygulandı'); },
@@ -1694,6 +1755,7 @@ const app = createApp({
             Object.values(this.settings.musteriTutar || {}).forEach(m => ['gunluk', 'tedarikci'].forEach(k => SEGMENTS.forEach(sg => { if (m[k] && m[k][sg]) delete m[k][sg][y]; })));
             this.filters.year = this.filters.year.filter(x => String(x) !== String(y));
             if (this.settings.kurlar) delete this.settings.kurlar[y];
+            if (this.settings.mevduat) delete this.settings.mevduat[y];
         },
 
         toggleAllYears() {
@@ -2153,8 +2215,19 @@ const app = createApp({
         },
         scheduleCharts() {
             clearTimeout(this._chartT);
-            if (this.activeTab !== 'raporlama' || !this.authed) { this.destroyCharts(); return; }
+            if (!['raporlama', 'vade'].includes(this.activeTab) || !this.authed) { this.destroyCharts(); return; }
             this._chartT = setTimeout(() => this.renderCharts(), 60);
+        },
+        /* Vade: operasyon hesabı ve mevduat hesabının ay ay bakiyesi */
+        vadeChart(id) {
+            const L = this.vadeLab; if (!L || !L.ready) return;
+            const ms = []; L.years.forEach(t => t.months.forEach(m => ms.push(m)));
+            const sm = v => this.shortMoney(v);
+            this.chart(id, { type: 'line', data: { labels: ms.map(m => MONTHS[m.mi].slice(0, 3) + ' ' + String(m.y).slice(2)), datasets: [
+                { label: 'Operasyon (filo + aylık nakit mevduatta)', data: ms.map(m => m.op), borderColor: C.orange, backgroundColor: 'rgba(255,102,0,.10)', fill: false, pointRadius: 0, borderWidth: 2, tension: .15 },
+                { label: 'Mevduat (aynı para faizde)', data: ms.map(m => m.dep), borderColor: C.blue, pointRadius: 0, borderWidth: 2, borderDash: [6, 4], tension: .15 }
+            ] }, options: { interaction: { mode: 'index', intersect: false }, plugins: { tooltip: { callbacks: { label: c => `${c.dataset.label}: ${this.money(c.parsed.y)}` } } },
+                scales: { x: { ticks: { maxTicksLimit: 12 } }, y: { ticks: { callback: v => sm(v) } } } } });
         },
         destroyCharts() { (this._charts || []).forEach(c => c.destroy()); this._charts = []; },
         chart(id, cfg) {
@@ -2170,7 +2243,10 @@ const app = createApp({
         },
         renderCharts() {
             this.destroyCharts();
-            if (!window.Chart || this.activeTab !== 'raporlama') return;
+            if (!window.Chart) return;
+            if (this.activeTab === 'vade') { this.vadeChart('chVadePage'); return; }
+            if (this.activeTab !== 'raporlama') return;
+            this.vadeChart('chVade');
             const V = this.view, M = this.monthly, sm = v => this.shortMoney(v), money = { ticks: { callback: v => sm(v) } };
             const tipMoney = { callbacks: { label: c => `${c.dataset.label ? c.dataset.label + ': ' : ''}${this.money(c.parsed.y !== undefined ? c.parsed.y : c.parsed)}` } };
             // 1. Aylık talep ve karşılama

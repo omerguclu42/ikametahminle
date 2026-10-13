@@ -305,6 +305,95 @@
                 </div>
             </div>
 
+            <!-- ================= Vade Hesaplama ================= -->
+            <div v-if="activeTab === 'vade'">
+                <div class="row g-4">
+                    <div class="col-xxl-4 col-xl-5">
+                        <div class="card shadow-sm border-0 mb-4">
+                            <div class="card-header bg-white"><h6 class="mb-0 text-orange">Mevduat Faizi (yıllık ortalama, vergi öncesi)</h6></div>
+                            <div class="card-body">
+                                <table class="table table-sm align-middle mb-2">
+                                    <thead class="table-light"><tr><th>Yıl</th><th>TL faizi (%)</th><th>Euro faizi (%)</th></tr></thead>
+                                    <tbody>
+                                        <tr v-for="y in years" :key="y">
+                                            <th>{{ y }}</th>
+                                            <td><num-input v-model="settings.mevduat[y].tl" :step="0.5" decimals :invalid="settings.mevduat[y].tl === null || settings.mevduat[y].tl === ''"></num-input></td>
+                                            <td><num-input v-model="settings.mevduat[y].eur" :step="0.1" decimals></num-input></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                                <label class="form-label small mb-1">Faiz işleme biçimi</label>
+                                <select class="form-select form-select-sm" v-model="settings.mevduatMod">
+                                    <option value="aylik">Aylık bileşik (vade her ay yenilenir)</option>
+                                    <option value="yillik">Yıllık efektif (oran = yılın getirisi)</option>
+                                </select>
+                                <div class="small text-muted mt-2">TL görünümünde TL faizi, € görünümünde Euro faizi kullanılır. Oranlar vergi (stopaj) öncesidir; operasyon kârı da vergi öncesi olduğu için karşılaştırma adildir.</div>
+                            </div>
+                        </div>
+                        <div class="card shadow-sm border-0">
+                            <div class="card-header bg-white"><h6 class="mb-0 text-orange">Nasıl hesaplanır?</h6></div>
+                            <div class="card-body small">
+                                <ul class="ps-3 mb-0 kur-rules">
+                                    <li><b>Yatırım tutarı:</b> filonun en yüksek finansman ihtiyacı (kümülatif nakdin en düşük değeri). Peşin alımda büyük kısmı ilk ayın araç ödemesidir.</li>
+                                    <li><b>Filo hesabı:</b> bu tutarla başlar; her ay mevduat faizi işler ve ayın net nakdi (dosya geliri − işletme − personel − alış / taksit + satış) eklenir. Fazla nakit mevduatta faiz kazanır, eksik ay mevduattan çekilir.</li>
+                                    <li><b>Mevduat hesabı:</b> aynı tutar dönem boyunca yalnızca faiz kazanır.</li>
+                                    <li><b>Fark</b> = dönem sonu (araç satışı dahil) filo hesabı − mevduat hesabı. Pozitifse filo kurmak mantıklı.</li>
+                                    <li><b>Filonun yıllık getirisi</b> (iç verim oranı): mevduat faizi bunun altındaysa filo kazanır; başabaş faizdir.</li>
+                                    <li>Simülatördeki araç adetleri, araç fiyatları, kredi seçimi, günlük tutarlar, SLA, kur… her değişiklik bu sayfaya anında yansır. Tüm filo hesaplanır (filtrelerden bağımsız).</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xxl-8 col-xl-7">
+                        <div class="card shadow-sm border-0" v-if="!fleetCash">
+                            <div class="empty-state"><i class="bi bi-piggy-bank"></i><div class="es-title">Simülatörde filo yok</div><div class="es-text">Tahminleme Simülatörü'nde araç adetlerini belirleyince karşılaştırma burada görünür.</div>
+                                <button class="btn btn-orange mt-2" @click="go('tahminleme')"><i class="bi bi-speedometer2"></i> Simülatöre Git</button></div>
+                        </div>
+                        <div class="alert alert-warning" v-else-if="vadeLab && !vadeLab.ready"><i class="bi bi-exclamation-triangle"></i> {{ vadeLab.missing.join(', ') }} yılı için {{ vadeLab.eur ? 'Euro' : 'TL' }} mevduat faizi girilmedi. Soldaki tabloya yıllık ortalama faizi girin.</div>
+                        <template v-else-if="vadeLab">
+                            <div class="row g-3 mb-3">
+                                <div class="col-6 col-lg-4"><div class="kpi"><div class="kpi-l">Yatırım Tutarı</div><div class="kpi-v" :title="money(vadeLab.K)">{{ shortMoney(vadeLab.K) }}</div><div class="kpi-s">En yüksek finansman ihtiyacı · {{ vadeLab.low ? months[vadeLab.low.mi] + ' ' + vadeLab.low.y : '' }}</div></div></div>
+                                <div class="col-6 col-lg-4"><div class="kpi"><div class="kpi-l">Operasyon Kazancı (Faizli)<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Operasyon Kazancı (Faizli)')" @mouseleave="hideTip" @click="showTip($event, 'Operasyon Kazancı (Faizli)')"></i></div><div class="kpi-v" :class="netClass(vadeLab.opGain)" :title="money(vadeLab.opGain)">{{ shortMoney(vadeLab.opGain) }}</div><div class="kpi-s">Faizsiz düz net {{ shortMoney(vadeLab.plainNet) }}</div></div></div>
+                                <div class="col-6 col-lg-4"><div class="kpi"><div class="kpi-l">Mevduatta Olsaydı<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Mevduatta Olsaydı')" @mouseleave="hideTip" @click="showTip($event, 'Mevduatta Olsaydı')"></i></div><div class="kpi-v text-primary" :title="money(vadeLab.depGain)">{{ shortMoney(vadeLab.depGain) }}</div><div class="kpi-s">Ortalama faiz %{{ fmt1(vadeLab.avgRate) }}</div></div></div>
+                                <div class="col-6 col-lg-4"><div class="kpi kpi-hl"><div class="kpi-l">Mevduata Göre Fark<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Mevduata Göre Fark')" @mouseleave="hideTip" @click="showTip($event, 'Mevduata Göre Fark')"></i></div><div class="kpi-v" :class="netClass(vadeLab.diff)" :title="money(vadeLab.diff)">{{ vadeLab.diff >= 0 ? '+' : '' }}{{ shortMoney(vadeLab.diff) }}</div><div class="kpi-s">{{ vadeLab.diff >= 0 ? 'Filo kurmak daha kârlı' : 'Mevduat daha kârlı' }}</div></div></div>
+                                <div class="col-6 col-lg-4"><div class="kpi kpi-hl"><div class="kpi-l">Operasyonun Yıllık Getirisi<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Operasyonun Yıllık Getirisi')" @mouseleave="hideTip" @click="showTip($event, 'Operasyonun Yıllık Getirisi')"></i></div><div class="kpi-v" :class="vadeLab.irr === null ? '' : (vadeLab.irr >= vadeLab.avgRate ? 'text-success' : 'text-danger')">{{ vadeLab.irr === null ? '-' : '%' + fmt1(vadeLab.irr) }}</div><div class="kpi-s">Mevduat ort. %{{ fmt1(vadeLab.avgRate) }} · başabaş faiz</div></div></div>
+                                <div class="col-6 col-lg-4"><div class="kpi"><div class="kpi-l">Mevduatı Geçtiği Ay</div><div class="kpi-v" :class="vadeLab.cross ? 'text-success' : (vadeLab.diff >= 0 ? '' : 'text-danger')">{{ vadeLab.cross ? months[vadeLab.cross.mi] + ' ' + vadeLab.cross.y : (vadeLab.diff >= 0 ? 'Baştan önde' : 'Geçmiyor') }}</div><div class="kpi-s">Filo hesabının mevduat hesabını ilk geçtiği ay</div></div></div>
+                            </div>
+                            <div class="card shadow-sm border-0 mb-3">
+                                <div class="card-body"><div class="an-chart" style="height:300px"><canvas id="chVadePage"></canvas></div></div>
+                            </div>
+                            <div class="card shadow-sm border-0">
+                                <div class="card-body p-0">
+                                    <div class="table-responsive">
+                                        <table class="table table-sm text-end mb-0 pl-table cash-table">
+                                            <thead class="table-light"><tr><th class="text-start">Dönem</th><th>Faiz</th><th>Filo Net Nakit</th><th>Filo Hesabına Faiz</th><th>Filo Hesabı</th><th>Mevduata Faiz</th><th>Mevduat Hesabı</th><th>Fark</th></tr></thead>
+                                            <tbody>
+                                                <template v-for="t in vadeLab.years" :key="t.y">
+                                                    <tr class="cash-year" @click="toggleVadeYear(t.y)">
+                                                        <td class="text-start"><i class="bi me-1" :class="vadeOpen[t.y] ? 'bi-chevron-down' : 'bi-chevron-right'"></i>{{ t.y }}</td>
+                                                        <td>%{{ fmt1(t.rate) }}</td>
+                                                        <td :class="netClass(t.net)">{{ shortMoney(t.net) }}</td><td :class="netClass(t.io)">{{ shortMoney(t.io) }}</td><td>{{ shortMoney(t.op) }}</td>
+                                                        <td class="text-primary">{{ shortMoney(t.id) }}</td><td>{{ shortMoney(t.dep) }}</td><td class="fw-bold" :class="netClass(t.diff)">{{ shortMoney(t.diff) }}</td>
+                                                    </tr>
+                                                    <template v-if="vadeOpen[t.y]">
+                                                        <tr v-for="m in t.months" :key="t.y + '-' + m.mi" class="cash-month" :class="{'pl-turn': vadeLab.cross && vadeLab.cross.y === m.y && vadeLab.cross.mi === m.mi}">
+                                                            <td class="text-start">{{ months[m.mi] }}</td><td></td>
+                                                            <td :class="netClass(m.net)">{{ shortMoney(m.net) }}</td><td :class="netClass(m.io)">{{ shortMoney(m.io) }}</td><td>{{ shortMoney(m.op) }}</td>
+                                                            <td class="text-primary">{{ shortMoney(m.id) }}</td><td>{{ shortMoney(m.dep) }}</td><td :class="netClass(m.diff)">{{ shortMoney(m.diff) }}</td>
+                                                        </tr>
+                                                    </template>
+                                                </template>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="small text-muted mt-2">Yıl satırına tıklayınca aylar açılır. Filo hesabı ve mevduat hesabı aynı yatırım tutarıyla ({{ shortMoney(vadeLab.K) }}) başlar; fark dönem sonunda (araç satışı dahil) okunur.</div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
             <!-- ================= Döviz Kuru ================= -->
             <div v-if="activeTab === 'kur'">
                 <div class="alert alert-warning d-flex gap-2 align-items-start" v-if="fx.missingYears.length">
@@ -873,6 +962,16 @@
                             <div class="kpi-s" v-if="opsLoad.active">En yoğun günde {{ fmt1(opsLoad.perMax) }} · günde aktif {{ fmt1(opsLoad.active) }} personel ({{ opsLoad.pers }} kişi × 6/7)</div>
                             <div class="kpi-s text-danger" v-else>Personel sayısı girilmemiş</div></div></div>
                     </div>
+                    <template v-if="vadeLab && vadeLab.ready">
+                        <div class="kpi-title">Yatırım Alternatifi (Mevduat) <a href="#" class="small text-orange ms-1 text-none" @click.prevent="go('vade')">Vade Hesaplama</a></div>
+                        <div class="row g-3 mb-3">
+                            <div class="col-6 col-lg-3"><div class="kpi kpi-hl"><div class="kpi-l">Mevduata Göre Fark<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Mevduata Göre Fark')" @mouseleave="hideTip" @click="showTip($event, 'Mevduata Göre Fark')"></i></div><div class="kpi-v" :class="netClass(vadeLab.diff)" :title="money(vadeLab.diff)">{{ vadeLab.diff >= 0 ? '+' : '' }}{{ shortMoney(vadeLab.diff) }}</div><div class="kpi-s">{{ vadeLab.diff >= 0 ? 'Filo kurmak daha kârlı' : 'Mevduat daha kârlı' }} · tüm filo</div></div></div>
+                            <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Operasyonun Yıllık Getirisi<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Operasyonun Yıllık Getirisi')" @mouseleave="hideTip" @click="showTip($event, 'Operasyonun Yıllık Getirisi')"></i></div><div class="kpi-v" :class="vadeLab.irr === null ? '' : (vadeLab.irr >= vadeLab.avgRate ? 'text-success' : 'text-danger')">{{ vadeLab.irr === null ? '-' : '%' + fmt1(vadeLab.irr) }}</div><div class="kpi-s">Mevduat ortalaması %{{ fmt1(vadeLab.avgRate) }}</div></div></div>
+                            <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Mevduatta Olsaydı<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Mevduatta Olsaydı')" @mouseleave="hideTip" @click="showTip($event, 'Mevduatta Olsaydı')"></i></div><div class="kpi-v text-primary" :title="money(vadeLab.depGain)">{{ shortMoney(vadeLab.depGain) }}</div><div class="kpi-s">{{ shortMoney(vadeLab.K) }} yatırım tutarının faizi</div></div></div>
+                            <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Operasyon Kazancı (Faizli)<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Operasyon Kazancı (Faizli)')" @mouseleave="hideTip" @click="showTip($event, 'Operasyon Kazancı (Faizli)')"></i></div><div class="kpi-v" :class="netClass(vadeLab.opGain)" :title="money(vadeLab.opGain)">{{ shortMoney(vadeLab.opGain) }}</div><div class="kpi-s">Aylık fazla nakit mevduatta değerlendirilerek</div></div></div>
+                        </div>
+                    </template>
+                    <div class="alert alert-light border small py-2 mb-3" v-else-if="vadeLab && !vadeLab.ready"><i class="bi bi-piggy-bank text-orange"></i> <a href="#" class="text-orange" @click.prevent="go('vade')">Vade Hesaplama</a> sayfasında yıllık mevduat faizini girdiğinizde filonun mevduata göre kârlılığı burada görünür.</div>
                     <div class="kpi-title">Yönetim Göstergeleri</div>
                     <div class="row g-3 mb-3">
                         <div class="col-6 col-lg-3"><div class="kpi"><div class="kpi-l">Başabaş Doluluk Oranı<i class="bi bi-info-circle kpi-info" @mouseenter="showTip($event, 'Başabaş Doluluk Oranı')" @mouseleave="hideTip" @click="showTip($event, 'Başabaş Doluluk Oranı')"></i></div>
